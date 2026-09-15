@@ -1,0 +1,22 @@
+# SPDX-License-Identifier: Apache-2.0
+#
+# `contracts` is a workspace package so that it and the Next app resolve the
+# SAME physical copy of @midnight-ntwrk/compact-runtime. The runtime is backed
+# by a WebAssembly module with identity-sensitive types: two separate copies
+# produce two WASM instances and every ContractState handed between them is
+# rejected as "unexpected type".
+packages:
+  - "."
+  - "contracts"
+
+onlyBuiltDependencies:
+  - sharp
+
+# The wallet SDK pulls ledger-v8 8.1.2 while midnight-js-protocol 4.1.1 — the
+# version the support matrix blesses — pins exactly 8.1.0. Two copies of a
+# WASM-backed package means two instances with identity-sensitive types, the
+# same failure mode documented above for compact-runtime: values handed across
+# the boundary are rejected as an unexpected type. 8.1.0 satisfies every
+# declared range (compact-js ^8.0.3, wallet-sdk-capabilities ^8.1.0), so pin it.
+overrides:
+  '@midnight-ntwrk/ledger-v8': 8.1.0
