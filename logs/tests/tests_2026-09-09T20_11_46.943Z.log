@@ -1,0 +1,2 @@
+[21:11:46.960] INFO (23520): Initializing wallet builder for preprod
+[21:11:47.120] INFO (23520): Creating dust wallet with params: {"indexerClientConnection":{"indexerHttpUrl":"https://indexer.preprod.midnight.network/api/v4/graphql","indexerWsUrl":"wss://indexer.preprod.midnight.network/api/v4/graphql/ws"},"provingServerUrl":"http://localhost:6300/","networkId":"preprod","relayURL":"wss://rpc.preprod.midnight.network/","txHistoryStorage":{"storage":{}},"costParameters":{"ledgerParams":{"__wbg_ptr":4653104},"additionalFeeOverhead":"0","feeBlocksMargin":5}}
