@@ -1,0 +1,16 @@
+{
+  "network": "preprod",
+  "contractAddress": "472d2b5a6fca246fe823e567fd358e0c1564c03b00ee9659f5dfe950f1e1f17e",
+  "deployTxHash": "8ac4798eb4f9f591bad62f54a936f6e35237f3a48449f7928e1d4b17395a7f91",
+  "deployTxIdentifiers": [
+    "002002653739025b1192d8ad023e0267c966e9d881db283c001ef6493382c24d8e",
+    "0004e0cf1a1dd91d0e044123e23d03e4f5f3656c67bb6596b975889034a86da666"
+  ],
+  "blockHeight": 2553480,
+  "deployedAt": "2026-09-15T00:51:54.000Z",
+  "deployedVia": "browser /deploy page, 1AM wallet",
+  "compilerVersion": "0.31.1",
+  "runtimeVersion": "0.16.0",
+  "explorer": "https://explorer.1am.xyz/tx/8ac4798eb4f9f591bad62f54a936f6e35237f3a48449f7928e1d4b17395a7f91?network=preprod",
+  "note": "Recovered from the preprod indexer (status SUCCESS, ContractDeploy). A second, duplicate VeriHealth contract was also deployed by the same operator during the same session because the deploy page hung; its address is unknown and it is unused."
+}

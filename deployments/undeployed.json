@@ -1,0 +1,8 @@
+{
+  "network": "undeployed",
+  "contractAddress": "eac9060999d00bc1003712a800a2f457f310953628f9b51ecdb1f5718d283748",
+  "deployTxId": "007919c330a90405adaa2156eeb1ea5025126881fc578e4981ec3db5b0050e5e10",
+  "deployedAt": "2026-09-08T01:12:33.851Z",
+  "compilerVersion": "0.31.1",
+  "runtimeVersion": "0.16.0"
+}
