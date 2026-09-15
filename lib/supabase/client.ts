@@ -3,7 +3,7 @@
 // Supabase browser clients.
 //
 // Supabase is OPTIONAL for the demo. When the env vars are absent the app falls
-// back to an in-memory proof log so a judge can run the whole flow without
+// back to an in-memory proof log so anyone can run the whole flow without
 // provisioning a database. isSupabaseConfigured() drives that switch.
 //
 // Two clients, one per role, each with its own auth storage key:

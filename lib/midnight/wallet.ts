@@ -101,7 +101,7 @@ export async function getServiceUris(): Promise<Record<string, string>> {
 }
 
 /**
- * Deterministic stand-in identity so judges without a wallet installed can
+ * Deterministic stand-in identity so anyone without a wallet installed can
  * still walk the full local flow. Clearly labelled as a demo identity in the UI.
  */
 export const DEMO_WALLET: MidnightWalletState = {

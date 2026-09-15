@@ -37,7 +37,7 @@ create table issuers (
   -- Hex-encoded 32-byte issuer public key, matching deriveIssuerPk() in the
   -- Compact contract. Public by design.
   public_key    text not null unique check (public_key ~ '^[0-9a-f]{64}$'),
-  -- True for every issuer in this buildathon submission. There are no real
+  -- True for every issuer in this project. There are no real
   -- healthcare-provider integrations.
   is_demo       boolean not null default true,
   -- Supabase auth user permitted to act as this issuer. Null until claimed.

@@ -1,7 +1,5 @@
 # Seath Aid — privacy-first health-record verification on Midnight
 
-**Akindo Midnight Buildathon — Wave 1**
-
 Prove a single medical fact without revealing the record behind it.
 
 Health records today force an all-or-nothing trade. To prove one fact — "I'm
@@ -20,15 +18,16 @@ boolean. Nothing else ever leaves the patient's device.
 
 | Area | Status |
 |---|---|
-| Compact contract, 6 circuits, compiles on toolchain 0.34.0 | Complete |
+| Compact contract, 6 circuits, compiler 0.31.1 / language 0.23 | Complete |
 | Vaccination Proof | Complete — contract, tests, UI |
 | Lab-Value Threshold Proof | Complete — contract, tests, UI |
 | Coverage/Eligibility Proof | Complete — contract, tests, UI |
 | Nullifier + revocation registry shared across all claim types | Complete |
 | Contract simulation tests (valid / tampered / revoked × 3) | 19 passing |
-| Frontend tests (happy + failure path × 3) | 12 passing |
+| Frontend tests (proof flows, credential packages, client config) | 27 passing |
 | Supabase schema, RLS, issuance flow | Integrated; 27 RLS checks + end-to-end test pass on a local stack; hosted project not yet created |
-| Patient dashboard, verifier view, issuer console, Lace connect | Complete |
+| Patient dashboard, verifier view, issuer console, wallet connect | Complete |
+| Contract deployed to Midnight preprod | `deployments/preprod.json`; the browser app still runs its own in-memory ledger |
 
 ---
 
@@ -139,24 +138,28 @@ The frontend executes the **real compiled circuits**. Nothing is mocked.
   contract test suite uses and the same one a deployed DApp uses to build
   transactions.
 - [`lib/midnight/wallet.ts`](lib/midnight/wallet.ts) implements Midnight's
-  standard DApp connector flow for Lace: it reads `window.midnight.mnLace`
-  (falling back to enumerating `window.midnight`), calls `enable()`, then
-  `state()`. If Lace is absent the UI offers a clearly-labelled demo identity so
-  the flow is still walkable.
+  DApp connector flow (`dapp-connector-api` 4.x): it enumerates
+  `window.midnight`, prefers **1AM**, then Lace, then any other injected wallet,
+  and calls `connect(networkId)`. `NEXT_PUBLIC_PREFERRED_WALLET_RDNS` overrides
+  the choice. With no wallet installed the UI offers a clearly-labelled demo
+  identity so the flow is still walkable.
 
-### Wave 1 scope — read this before judging
+### Current scope: the ledger runs in the browser
 
 The public ledger is held **in memory in the browser tab**, not on Midnight
-testnet. This is deliberate: it lets a judge run the complete
-issue → hold → prove → verify → revoke loop with no funded wallet, no proof
-server, and no testnet sync.
+testnet. That keeps the complete issue → hold → prove → verify → revoke loop
+runnable with no funded wallet, no proof server, and no testnet sync.
 
 What is genuinely enforced by the compiled Compact contract: the private/public
 state split, Merkle attestation, the revocation check, nullifier replay
-protection, and every claim predicate. What is deferred to Wave 2: deploying to
-testnet, submitting real transactions, and generating actual SNARK proofs via
-the proof server. Because no SNARK is generated, the ~39 MB of prover keys are
-not required at runtime and are gitignored.
+protection, and every claim predicate. What is not wired up yet: pointing the
+app at the deployed contract, submitting real transactions, and generating
+actual SNARK proofs via the proof server. Because no SNARK is generated in this
+mode, the ~39 MB of prover keys are not required at runtime and are gitignored.
+
+The contract itself **is** deployed to preprod — see
+[`deployments/preprod.json`](deployments/preprod.json) — and `/deploy` (a
+development-only page) deploys a new one from the browser.
 
 Reloading the page resets the in-memory ledger and re-issues the demo
 credentials. Navigate between routes using the in-app links so the dashboard,
@@ -172,12 +175,12 @@ Flagging these rather than hiding them.
    (credential, verifier), so one verifier gets one proof per credential and
    cannot binary-search the exact value. A verifier willing to forge multiple
    identities still could. The fix is an issuer-governed allowlist of permitted
-   thresholds — Wave 2.
+   thresholds; not implemented.
 2. **Revocation-handle linkability.** Checking `revocationRegistry.member(handle)`
    requires disclosing the handle, so all proofs from one credential are
    correlatable. The handle is an opaque random-looking hash with no medical
    content, but it is a correlation vector. A non-membership accumulator would
-   remove it — Wave 2/3.
+   remove it; not implemented.
 3. **Assert messages.** Circuit assertions use generic strings, and the UI shows
    a single generic failure message rather than which check failed, so a
    rejected proof does not disclose *why* it was rejected.
@@ -189,7 +192,7 @@ real clinic, laboratory, insurer, or health system anywhere in this codebase.
 
 The demo keypairs are hardcoded and published in
 [`lib/midnight/demo-issuer.ts`](lib/midnight/demo-issuer.ts) with a prominent
-banner, and the issuer console shows a warning label. They exist so a judge can
+banner, and the issuer console shows a warning label. They exist so anyone can
 run the full loop unattended. In production an issuer key would live in an HSM
 and the issuer registry would be a governed allowlist rather than the
 self-service `registerIssuer` used here. All medical data is synthetic.
@@ -202,8 +205,8 @@ self-service `registerIssuer` used here. All medical data is synthetic.
 
 - Node 20+ and pnpm 10+
 - A Chromium or Firefox browser
-- Optional: [Lace for Midnight](https://www.lace.io/midnight). Without it the
-  app offers a demo identity.
+- Optional: a Midnight wallet — [1AM](https://1am.xyz) (the default) or
+  [Lace](https://www.lace.io/midnight). Without one the app offers a demo identity.
 - Optional, only to recompile the contract: the Compact toolchain (see below)
 
 ### Run it
@@ -223,7 +226,7 @@ toolchain is needed just to run the app.
 2. The dashboard boots the contract runtime and issues three demo credentials
    through the real issuance circuit — one per claim type. The **Public ledger**
    panel shows 3 registered issuers and 0 proofs.
-3. Connect Lace, or click **Use demo identity**.
+3. Connect your wallet (1AM by default), or click **Use demo identity**.
 4. On the **MMR immunisation series** card, leave the verifier as "Acme Corp HR"
    and click **Generate proof**. This runs `proveVaccination`. You should see
    **Proof passed** and a proof reference. Copy it.
@@ -249,7 +252,7 @@ Or separately:
 
 ```bash
 pnpm test:contracts   # 19 Compact simulation tests
-pnpm test             # 12 frontend tests
+pnpm test             # 27 frontend tests (+1 Supabase E2E, skipped without a local stack)
 ```
 
 Contract tests cover, for each of the three claim types: a valid non-revoked
@@ -265,14 +268,16 @@ Requires the Compact toolchain. On Linux/macOS:
 curl --proto '=https' --tlsv1.2 -LsSf \
   https://github.com/midnightntwrk/compact/releases/latest/download/compact-installer.sh | sh
 export PATH="$HOME/.local/bin:$PATH"
-compact update
+compact update 0.31.1
 pnpm compact
 ```
 
 On Windows use WSL2. The toolchain is a POSIX shell installer and does not run
 under PowerShell. You may need `unzip` and `zstd`:
-`sudo apt-get install -y unzip zstd`. This project was built and verified
-against **Compact compiler 0.34.0 / language version 0.26**.
+`sudo apt-get install -y unzip zstd`. The committed artefacts are built with
+**Compact compiler 0.31.1 / language version 0.23** — the versions every live
+Midnight network currently runs. Newer compilers produce artefacts the networks
+reject, so pin this one.
 
 ### Optional: Supabase
 
@@ -342,7 +347,7 @@ SUPABASE_E2E_SECRET_KEY=$SECRET_KEY \
 
 Both refuse to run against anything but localhost.
 
-**Wave 1 limit.** The ledger is still in-memory per browser, so a patient's tab
+**Current limit.** The ledger is still in-memory per browser, so a patient's tab
 rebuilds it from Supabase records by acting as the issuer. Only the demo
 issuers' keys are known, so only their credentials can be proven; other issuers'
 credentials are recorded but show as not provable until the app uses the
@@ -364,7 +369,7 @@ app/
   page.tsx                        landing
   dashboard/                      patient dashboard
   verify/                         simulated verifier view
-  issuer/                         issuer revoke console
+  issuer/                         issuer console (issue and revoke)
 components/ehr/                   provider, credential card, history, ledger panel
 supabase/migrations/              schema, RLS, seed
 __tests__/                        frontend tests
@@ -378,4 +383,4 @@ Apache 2.0. See [LICENSE](LICENSE). All Midnight-related code carries an
 ## Repository setup
 
 After pushing, add the `midnightntwrk` topic to the GitHub repository
-(Settings → About → Topics) as required by the buildathon rules.
+(Settings → About → Topics) so it is discoverable as a Midnight project.

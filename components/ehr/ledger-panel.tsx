@@ -1,7 +1,7 @@
 "use client";
 // SPDX-License-Identifier: Apache-2.0
 //
-// Shows the ENTIRE public ledger state. The point of this panel is that a judge
+// Shows the ENTIRE public ledger state. The point of this panel is that anyone
 // can read everything the chain knows and confirm no medical value is there.
 
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";

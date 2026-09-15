@@ -3,12 +3,12 @@
 // ============================================================================
 //                        *** DEMO ISSUERS — NOT REAL ***
 // ============================================================================
-// These are SIMULATED issuer keypairs for the Midnight Buildathon demo. They
+// These are SIMULATED issuer keypairs for this demo. They
 // correspond to no real clinic, laboratory, or insurer, and there is no
 // integration with any actual healthcare provider anywhere in this codebase.
 //
 // The secret keys are deliberately hardcoded and published in this repository.
-// They exist so a judge can run the full issue -> hold -> prove -> verify ->
+// They exist so anyone can run the full issue -> hold -> prove -> verify ->
 // revoke loop unattended. In production an issuer's key would live in an HSM
 // and the issuer registry would be a governed allowlist, not self-service.
 // ============================================================================

@@ -9,7 +9,7 @@
 //
 // Two modes:
 //   demo      — Supabase not configured. The tab self-issues three demo
-//               credentials through the real issuance circuit. Unchanged Wave 1
+//               credentials through the real issuance circuit. Unchanged demo
 //               behaviour; the test suite runs in this mode.
 //   supabase  — credentials are issued from the issuer console and recorded in
 //               Supabase. The tab starts with an empty credential list, and

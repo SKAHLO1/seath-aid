@@ -11,11 +11,12 @@
 // to circuits only as witnesses. It is never sent to Supabase, never written to
 // the ledger, and never included in any log line or error message.
 //
-// WAVE 1 SCOPE: the public ledger is held in memory in the browser rather than
-// on Midnight testnet, so judges can run the whole loop without a funded wallet
+// CURRENT SCOPE: the public ledger is held in memory in the browser rather than
+// on Midnight testnet, so anyone can run the whole loop without a funded wallet
 // or a proof server. Circuit execution, the dual-ledger split, Merkle
 // attestation, revocation, and nullifiers are all genuinely enforced by the
-// compiled contract. Testnet deployment is Wave 2. See README.
+// compiled contract. A contract IS deployed to preprod (deployments/preprod.json),
+// but the app does not use it yet. See README.
 
 import type { ChargedState, ContractState } from "@midnight-ntwrk/compact-runtime";
 
@@ -206,7 +207,7 @@ export class VeriHealthRuntime {
   // -------------------------------------------------------------------------
   // Replay from Supabase
   //
-  // In Wave 1 the ledger lives in this tab's memory and starts empty on every
+  // Today the ledger lives in this tab's memory and starts empty on every
   // load. When credentials are issued from the issuer console and recorded in
   // Supabase, the patient's tab rebuilds the relevant ledger state from those
   // records: each commitment is inserted into the credential tree, and each
@@ -216,7 +217,7 @@ export class VeriHealthRuntime {
   // Replay acts as the issuer, so it needs the issuer's secret key. Only the
   // DEMO issuers' keys are known (they are public by design), so only their
   // credentials can be replayed. A real issuer's credentials need the deployed
-  // contract, which is out of Wave 1 scope.
+  // contract, which the app does not use yet.
   // -------------------------------------------------------------------------
 
   private readonly replayedCommitments = new Set<string>();

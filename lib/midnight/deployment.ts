@@ -9,7 +9,7 @@
 // stays the human-readable record of what was deployed.
 //
 // When no address is configured the app stays in local demo mode, which is the
-// Wave 1 behaviour: real compiled circuits, in-memory ledger, no wallet needed.
+// Demo behaviour: real compiled circuits, in-memory ledger, no wallet needed.
 
 import { type MidnightNetwork, isMidnightNetwork } from "./network";
 
