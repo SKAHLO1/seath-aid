@@ -1,0 +1,259 @@
+// SPDX-License-Identifier: Apache-2.0
+//
+// VeriHealth — privacy-first health-record verification on Midnight.
+//
+// DUAL-LEDGER MODEL
+// -----------------
+// PRIVATE STATE (witnesses, supplied by the holder's local store, never on chain):
+//   - the vaccination record (vaccine code, dose count, completion date)
+//   - the credential nonce that blinds the on-chain commitment
+//   - the Merkle authentication path locating the credential in the tree
+//   - the issuer's secret key (issuer-side circuits only)
+//
+// PUBLIC STATE (ledger, visible to everyone):
+//   - registeredIssuers    : demo issuer public keys
+//   - credentialTree       : commitments to issued credentials (hiding + binding)
+//   - revocationRegistry   : revoked credential handles
+//   - usedNullifiers       : spent proof nullifiers (replay protection)
+//   - proofResults         : nullifier -> pass/fail boolean ONLY
+//
+// The ONLY values that cross from private to public are wrapped in disclose():
+// the pass/fail boolean, the revocation handle, and the proof nullifier. No
+// medical value is ever disclosed, logged, or emitted.
+
+pragma language_version 0.23;
+import CompactStandardLibrary;
+
+// Depth of the credential commitment tree: 2^10 = 1024 demo credentials.
+// HistoricMerkleTree lets a holder prove against a root that was valid when
+// their path was captured, so issuance by others does not invalidate proofs.
+export ledger credentialTree: HistoricMerkleTree<10, Bytes<32>>;
+
+// Demo issuer registry. In production this would be a governed allowlist;
+// for the buildathon any keypair may self-register (see registerIssuer).
+export ledger registeredIssuers: Set<Bytes<32>>;
+
+// Revoked credential handles. An issuer can compute a handle without knowing
+// the holder's secret, which is what makes issuer-side revocation possible.
+export ledger revocationRegistry: Set<Bytes<32>>;
+
+// Spent proof nullifiers — prevents replaying one proof to the same verifier.
+export ledger usedNullifiers: Set<Bytes<32>>;
+
+// Verification outcomes. Value is a bare boolean: pass/fail and nothing else.
+export ledger proofResults: Map<Bytes<32>, Boolean>;
+
+export ledger proofCount: Counter;
+
+// ---------------------------------------------------------------------------
+// Private witnesses — implemented in TypeScript against the holder's local
+// store. None of these values are ever written to the ledger.
+// ---------------------------------------------------------------------------
+
+export struct VaccinationRecord {
+  vaccineCode: Bytes<32>;
+  doses: Uint<8>;
+  completionDate: Uint<64>;
+}
+
+export struct LabResult {
+  labCode: Bytes<32>;
+  value: Uint<64>;
+  measuredDate: Uint<64>;
+}
+
+export struct CoveragePolicy {
+  policyRef: Bytes<32>;
+  active: Boolean;
+  expiryDate: Uint<64>;
+}
+
+witness vaccinationRecord(): VaccinationRecord;
+witness labResult(): LabResult;
+witness coveragePolicy(): CoveragePolicy;
+witness credentialNonce(): Bytes<32>;
+witness credentialIssuerPk(): Bytes<32>;
+witness credentialPath(): MerkleTreePath<10, Bytes<32>>;
+witness issuerSecretKey(): Bytes<32>;
+
+// ---------------------------------------------------------------------------
+// Pure helpers — domain-separated hashing shared by every claim type.
+// ---------------------------------------------------------------------------
+
+export pure circuit deriveIssuerPk(sk: Bytes<32>): Bytes<32> {
+  return persistentHash<Vector<2, Bytes<32>>>([pad(32, "vh:issuer:v1"), sk]);
+}
+
+// The revocation handle binds a credential to its issuer without revealing the
+// claim data. Both issuer and holder can compute it; nobody else can guess it.
+export pure circuit deriveHandle(issuerPk: Bytes<32>, nonce: Bytes<32>): Bytes<32> {
+  return persistentHash<Vector<3, Bytes<32>>>([pad(32, "vh:handle:v1"), issuerPk, nonce]);
+}
+
+// One nullifier per (credential, verifier) pair: replaying the same proof to the
+// same verifier is rejected, while a different verifier gets a distinct value.
+export pure circuit deriveNullifier(handle: Bytes<32>, verifierId: Bytes<32>): Bytes<32> {
+  return persistentHash<Vector<3, Bytes<32>>>([pad(32, "vh:nul:v1"), handle, verifierId]);
+}
+
+// Commitment to a vaccination credential. The nonce blinds it so that the
+// on-chain leaf reveals nothing about the record, even to a guessing attacker.
+export pure circuit commitVaccination(issuerPk: Bytes<32>,
+                                      rec: VaccinationRecord,
+                                      nonce: Bytes<32>): Bytes<32> {
+  return persistentHash<Vector<6, Bytes<32>>>([
+    pad(32, "vh:vax:v1"),
+    issuerPk,
+    rec.vaccineCode,
+    rec.doses as Field as Bytes<32>,
+    rec.completionDate as Field as Bytes<32>,
+    nonce
+  ]);
+}
+
+export pure circuit commitLabResult(issuerPk: Bytes<32>,
+                                    rec: LabResult,
+                                    nonce: Bytes<32>): Bytes<32> {
+  return persistentHash<Vector<6, Bytes<32>>>([
+    pad(32, "vh:lab:v1"),
+    issuerPk,
+    rec.labCode,
+    rec.value as Field as Bytes<32>,
+    rec.measuredDate as Field as Bytes<32>,
+    nonce
+  ]);
+}
+
+export pure circuit commitCoverage(issuerPk: Bytes<32>,
+                                   pol: CoveragePolicy,
+                                   nonce: Bytes<32>): Bytes<32> {
+  return persistentHash<Vector<6, Bytes<32>>>([
+    pad(32, "vh:cov:v1"),
+    issuerPk,
+    pol.policyRef,
+    (pol.active ? 1 : 0) as Field as Bytes<32>,
+    pol.expiryDate as Field as Bytes<32>,
+    nonce
+  ]);
+}
+
+// ---------------------------------------------------------------------------
+// Issuer-side circuits (demo issuer only — see README)
+// ---------------------------------------------------------------------------
+
+// DEMO ONLY: open self-registration so judges can run the flow unattended.
+export circuit registerIssuer(): Bytes<32> {
+  const pk = disclose(deriveIssuerPk(issuerSecretKey()));
+  registeredIssuers.insert(pk);
+  return pk;
+}
+
+// The issuer computes the commitment off-chain (it already knows the record and
+// the nonce) and publishes only the opaque hash.
+export circuit issueCredential(commitment: Bytes<32>): [] {
+  const pk = disclose(deriveIssuerPk(issuerSecretKey()));
+  assert(registeredIssuers.member(pk), "unauthorized issuer");
+  // Public by construction: an opaque blinded hash chosen by the issuer.
+  credentialTree.insert(disclose(commitment));
+}
+
+// Revocation: the issuer publishes the handle of a credential it issued.
+export circuit revokeCredential(handle: Bytes<32>): [] {
+  const pk = disclose(deriveIssuerPk(issuerSecretKey()));
+  assert(registeredIssuers.member(pk), "unauthorized issuer");
+  // Public by construction: an opaque handle carrying no medical content.
+  revocationRegistry.insert(disclose(handle));
+}
+
+// ---------------------------------------------------------------------------
+// Holder-side proving circuit — Vaccination Proof
+//
+// Public inputs : currentDate, requiredDoses, verifierId
+// Private inputs: the whole vaccination record, nonce, issuer pk, Merkle path
+// Public output : a single boolean
+// ---------------------------------------------------------------------------
+
+// Attestation, revocation, and replay checks shared by EVERY claim type. Each
+// prove* circuit computes its own commitment and predicate, then hands both to
+// this helper. Adding a fourth claim type means adding a commitment scheme and
+// a predicate — the security-critical path below is not duplicated.
+circuit settleProof(issuerPk: Bytes<32>,
+                    nonce: Bytes<32>,
+                    leaf: Bytes<32>,
+                    path: MerkleTreePath<10, Bytes<32>>,
+                    verifierId: Bytes<32>,
+                    result: Boolean): Boolean {
+  // 1. The record must match a credential actually issued on chain. Tampering
+  //    with any field changes the commitment and breaks Merkle membership.
+  //    The root is already public ledger state, so disclosing it leaks nothing;
+  //    the path itself (which leaf, and its siblings) stays private.
+  const root = disclose(merkleTreePathRoot<10, Bytes<32>>(path));
+  assert(credentialTree.checkRoot(root), "credential not attested by any issuer");
+  assert(path.leaf == leaf, "credential does not match attested commitment");
+
+  // 2. Revocation check. The handle is opaque and carries no medical content.
+  const handle = disclose(deriveHandle(issuerPk, nonce));
+  assert(!revocationRegistry.member(handle), "credential revoked");
+
+  // 3. Replay protection, scoped to this verifier.
+  const nullifier = disclose(deriveNullifier(handle, verifierId));
+  assert(!usedNullifiers.member(nullifier), "proof already used for this verifier");
+
+  usedNullifiers.insert(nullifier);
+  proofResults.insert(nullifier, disclose(result));
+  proofCount.increment(1);
+  return disclose(result);
+}
+
+// Claim type 1 — Vaccination Proof.
+// Public: currentDate, requiredDoses, verifierId. Private: the whole record.
+export circuit proveVaccination(currentDate: Uint<64>,
+                                requiredDoses: Uint<8>,
+                                verifierId: Bytes<32>): Boolean {
+  const rec = vaccinationRecord();
+  const nonce = credentialNonce();
+  const issuerPk = credentialIssuerPk();
+
+  // Predicate evaluated entirely inside the circuit over private data.
+  // Only its boolean result escapes.
+  const result = (rec.doses >= requiredDoses) && (rec.completionDate <= currentDate);
+
+  return settleProof(issuerPk, nonce,
+                     commitVaccination(issuerPk, rec, nonce),
+                     credentialPath(), verifierId, result);
+}
+
+// Claim type 2 — Lab-Value Threshold Proof.
+// Public: threshold, requireBelow, verifierId. Private: the exact lab value.
+// requireBelow selects the direction of the comparison, so one circuit serves
+// both "LDL below 200" and "haemoglobin at least 12".
+export circuit proveLabThreshold(threshold: Uint<64>,
+                                 requireBelow: Boolean,
+                                 verifierId: Bytes<32>): Boolean {
+  const rec = labResult();
+  const nonce = credentialNonce();
+  const issuerPk = credentialIssuerPk();
+
+  const result = requireBelow
+    ? (rec.value <= threshold)
+    : (rec.value >= threshold);
+
+  return settleProof(issuerPk, nonce,
+                     commitLabResult(issuerPk, rec, nonce),
+                     credentialPath(), verifierId, result);
+}
+
+// Claim type 3 — Coverage/Eligibility Proof.
+// Public: currentDate, verifierId. Private: policy status AND expiry date.
+export circuit proveCoverage(currentDate: Uint<64>,
+                             verifierId: Bytes<32>): Boolean {
+  const pol = coveragePolicy();
+  const nonce = credentialNonce();
+  const issuerPk = credentialIssuerPk();
+
+  const result = pol.active && (currentDate <= pol.expiryDate);
+
+  return settleProof(issuerPk, nonce,
+                     commitCoverage(issuerPk, pol, nonce),
+                     credentialPath(), verifierId, result);
+}
