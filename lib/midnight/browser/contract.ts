@@ -44,6 +44,11 @@ export type ConnectOptions = {
  * `initialPrivateState` is only used the first time this browser sees the
  * contract; afterwards the stored private state wins, which is what keeps a
  * holder's witnesses across reloads.
+ *
+ * The providers are returned alongside the contract because callers need both:
+ * the contract to submit transactions, and publicDataProvider to read the
+ * ledger the proofs are checked against. Building a second provider record
+ * would open a second IndexedDB store and a second indexer connection.
  */
 export async function connectToDeployedContract({
   config,
@@ -52,12 +57,14 @@ export async function connectToDeployedContract({
 }: ConnectOptions) {
   const providers = buildBrowserProviders({ config, session, storagePassword });
 
-  return findDeployedContract(providers as never, {
+  const contract = await findDeployedContract(providers as never, {
     compiledContract: browserCompiledContract(),
     contractAddress: config.contractAddress,
     privateStateId: PRIVATE_STATE_ID,
     initialPrivateState: emptyPrivateState(),
   } as never);
+
+  return { contract, providers };
 }
 
 /**

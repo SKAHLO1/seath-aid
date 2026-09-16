@@ -1,76 +1,34 @@
 // SPDX-License-Identifier: Apache-2.0
 //
-// Process-wide singleton for the contract runtime and the patient's credentials.
+// The patient's credentials: what Supabase recorded, paired with what this
+// browser holds privately, checked against what the chain actually shows.
 //
-// The issuer console, patient dashboard, and verifier view are separate routes
-// but must observe the SAME public ledger — otherwise revoking a credential in
-// the issuer console would not affect proofs generated in the dashboard, and
-// the revocation path could not be demonstrated end to end.
+// A credential is only usable when all three agree:
 //
-// Two modes:
-//   demo      — Supabase not configured. The tab self-issues three demo
-//               credentials through the real issuance circuit. Unchanged demo
-//               behaviour; the test suite runs in this mode.
-//   supabase  — credentials are issued from the issuer console and recorded in
-//               Supabase. The tab starts with an empty credential list, and
-//               loadHolderCredentials() rebuilds ledger state and the patient's
-//               credentials once a wallet identity is known.
+//   Supabase  the public record — who issued it, its label, its handle
+//   chain     the commitment is a leaf of the on-chain credential tree
+//   browser   the imported package holding the nonce and medical values
 //
-// The private half of a credential (nonce and medical values) is never sent to
-// a server: in demo mode it lives in this tab; in supabase mode it comes from a
-// package the patient imported into this browser's IndexedDB.
+// Anything short of that is reported as pending, with the reason, rather than
+// shown as a credential that will fail the moment it is used.
+//
+// The private half of a credential never reaches a server: it arrives as a
+// package the patient imports, and lives only in this browser's IndexedDB.
 
-import { isSupabaseConfigured } from "@/lib/supabase/client";
 import { ensureHolderSession, listMyCredentials } from "@/lib/supabase/holder";
 import type { CredentialWithIssuer } from "@/lib/supabase/types";
 import type { ClaimType } from "./claim-types";
+import type { ChainView } from "./ledger-view";
 import {
   CredentialPackageError,
   decodePackage,
   toHeldCredential,
   verifyPackage,
 } from "./credential-package";
-import { issueDemoCredentials } from "./demo-data";
 import { getLocalCredential, saveLocalCredential } from "./local-credentials";
-import { type HeldCredential, VeriHealthRuntime } from "./runtime";
+import type { HeldCredential } from "./private-state";
 
-export type Session = {
-  runtime: VeriHealthRuntime;
-  /** Demo mode: the self-issued credentials. Supabase mode: empty until loaded. */
-  credentials: HeldCredential[];
-};
-
-let sessionPromise: Promise<Session> | null = null;
-
-export function getSession(): Promise<Session> {
-  if (!sessionPromise) {
-    sessionPromise = (async () => {
-      const runtime = await VeriHealthRuntime.create();
-      if (isSupabaseConfigured()) {
-        // Issuers must be registered before any recorded credential can be
-        // replayed into the tree.
-        await runtime.registerDemoIssuers();
-        return { runtime, credentials: [] };
-      }
-      const credentials = await issueDemoCredentials(runtime);
-      return { runtime, credentials };
-    })().catch((e) => {
-      // Allow a later retry rather than caching a permanent failure.
-      sessionPromise = null;
-      throw e;
-    });
-  }
-  return sessionPromise;
-}
-
-/** Test helper: drop the cached session so each test starts clean. */
-export function resetSession(): void {
-  sessionPromise = null;
-}
-
-// ---------------------------------------------------------------------------
-// Supabase mode
-// ---------------------------------------------------------------------------
+import { pureCircuits } from "@/contracts/src/managed/verihealth/contract/index.js";
 
 /** A recorded credential this browser cannot prove yet, and why. */
 export type PendingCredential = {
@@ -84,13 +42,13 @@ export type PendingCredential = {
   reason:
     | "awaiting-package" // no package imported in this browser yet
     | "package-mismatch" // an imported package no longer matches the record
-    | "non-demo-issuer"; // cannot be replayed into the in-memory ledger
+    | "not-on-chain"; // commitment absent from the on-chain tree
 };
 
 export type HolderCredentials = {
   credentials: HeldCredential[];
   pending: PendingCredential[];
-  /** Row ids recorded as revoked in Supabase. */
+  /** Row ids recorded as revoked in Supabase, or revoked on chain. */
   revokedIds: Set<string>;
   /** Public records, kept so imports can be checked without a refetch. */
   records: CredentialWithIssuer[];
@@ -113,13 +71,16 @@ function pendingFrom(
 }
 
 /**
- * Binds this browser's holder session to `walletAddress`, loads the patient's
- * recorded credentials, replays their issuance and revocation into the
- * in-memory ledger, and pairs each with its imported package.
+ * Binds this browser's holder session to `walletAddress` and assembles the
+ * patient's credentials from the record, the chain, and local storage.
+ *
+ * A credential is treated as revoked if EITHER source says so. The chain is
+ * authoritative for proving, but the Supabase flag is what another browser's
+ * revocation shows up as before the ledger read catches it.
  */
 export async function loadHolderCredentials(
-  runtime: VeriHealthRuntime,
   walletAddress: string,
+  chain: ChainView,
 ): Promise<HolderCredentials> {
   await ensureHolderSession(walletAddress);
   const records = await listMyCredentials();
@@ -129,18 +90,14 @@ export async function loadHolderCredentials(
   const revokedIds = new Set<string>();
 
   for (const row of records) {
-    if (row.revoked) revokedIds.add(row.id);
+    const revoked = row.revoked || chain.isRevoked(row.nullifier_hash);
+    if (revoked) revokedIds.add(row.id);
 
-    if (!runtime.demoIssuerForPublicKey(row.issuer.public_key)) {
-      pending.push(pendingFrom(row, "non-demo-issuer"));
+    // No point pairing a package with a commitment the chain has never seen:
+    // the proof would fail for want of a Merkle path.
+    if (!chain.isOnChain(row.commitment)) {
+      pending.push(pendingFrom(row, "not-on-chain"));
       continue;
-    }
-
-    // Ledger first, so the credential is provable (or correctly revoked) the
-    // moment its package is available.
-    await runtime.replayIssuance(row.issuer.public_key, row.commitment);
-    if (row.revoked) {
-      await runtime.replayRevocation(row.issuer.public_key, row.nullifier_hash);
     }
 
     const pkg = await getLocalCredential(row.nullifier_hash);
@@ -148,7 +105,7 @@ export async function loadHolderCredentials(
       pending.push(pendingFrom(row, "awaiting-package"));
       continue;
     }
-    const matches = verifyPackage(runtime.pureCircuits, pkg, {
+    const matches = verifyPackage(pureCircuits, pkg, {
       claimType: row.claim_type,
       issuerPublicKey: row.issuer.public_key,
       commitment: row.commitment,
@@ -171,7 +128,6 @@ export async function loadHolderCredentials(
  * field of it is ever echoed.
  */
 export async function importCredentialPackage(
-  runtime: VeriHealthRuntime,
   code: string,
   records: CredentialWithIssuer[],
 ): Promise<void> {
@@ -182,7 +138,7 @@ export async function importCredentialPackage(
       "This package is not for any credential issued to the connected wallet.",
     );
   }
-  const matches = verifyPackage(runtime.pureCircuits, pkg, {
+  const matches = verifyPackage(pureCircuits, pkg, {
     claimType: row.claim_type,
     issuerPublicKey: row.issuer.public_key,
     commitment: row.commitment,
