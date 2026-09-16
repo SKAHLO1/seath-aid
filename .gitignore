@@ -44,3 +44,4 @@ midnight-level-db/
 .claude/
 __tests__/
 HANDOFF.md
+config.bat

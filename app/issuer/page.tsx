@@ -6,6 +6,7 @@ import Link from "next/link";
 
 import { IssuerConsole } from "@/components/ehr/issuer-console";
 import { VeriHealthProvider } from "@/components/ehr/verihealth-provider";
+import { Logo } from "@/components/logo";
 import { Button } from "@/components/ui/button";
 
 export default function IssuerPage() {
@@ -13,7 +14,7 @@ export default function IssuerPage() {
     <VeriHealthProvider>
       <main className="mx-auto max-w-3xl px-6 py-16">
         <header className="mb-8">
-          <p className="text-sm text-muted-foreground">Seath Aid</p>
+          <Logo className="mb-1" />
           <h1 className="text-3xl font-semibold tracking-tight">Issuer console</h1>
           <p className="mt-2 text-sm text-muted-foreground">
             Issuing publishes a credential&apos;s commitment to the on-chain Merkle

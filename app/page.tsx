@@ -3,8 +3,9 @@
 
 import { ArrowRight, Eye, EyeOff } from "lucide-react"
 import dynamic from "next/dynamic"
+import Image from "next/image"
 import Link from "next/link"
-import { useCallback, useState } from "react"
+import { useState } from "react"
 
 import { AgentInterface } from "@/components/agent-interface"
 import { DevExSection } from "@/components/devex-section"
@@ -26,15 +27,11 @@ const GlitchBackground = dynamic(
 )
 
 export default function Home() {
-  // Gates the hero reveal on the intro curtain retracting, so the headline
-  // animates in rather than being already-there behind it.
-  const [introDone, setIntroDone] = useState(false)
   const [heroHovered, setHeroHovered] = useState(false)
-  const onIntroDone = useCallback(() => setIntroDone(true), [])
 
   return (
     <main className="min-h-screen">
-      <IntroAnimation onDone={onIntroDone} />
+      <IntroAnimation />
 
       {/* Hero ------------------------------------------------------------ */}
       <section
@@ -46,9 +43,12 @@ export default function Home() {
           <GlitchBackground isHovered={heroHovered} />
         </div>
 
+        {/* `immediate` so the headline animates from first paint on a CSS
+            timeline, rather than waiting for hydration to reveal it. */}
         <RevealText
           as="h1"
-          delay={introDone ? 0 : HERO_REVEAL_MS}
+          immediate
+          delay={HERO_REVEAL_MS}
           className="max-w-3xl text-balance text-5xl font-semibold leading-[1.05] tracking-tight sm:text-6xl"
         >
           Prove a medical fact. Reveal nothing else.
@@ -206,6 +206,16 @@ export default function Home() {
       </section>
 
       <footer className="mx-auto max-w-5xl px-6 py-12 text-sm text-muted-foreground">
+        {/* The full wordmark, used here because the footer background is known
+            light. Its lettering is dark green on transparency, so it must not
+            be placed on a dark surface. */}
+        <Image
+          src="/images/seath-aid-wordmark.png"
+          alt="Seath Aid — proof without exposure"
+          width={1600}
+          height={480}
+          className="mb-5 h-auto w-[200px]"
+        />
         <p>
           Built on Midnight with Compact. All issuers in this demo are simulated
           and all medical data is synthetic. Midnight-related code is licensed

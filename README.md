@@ -327,8 +327,14 @@ patient's wallet; patients import the package and prove against the chain.
    `supabase/migrations/0001_core_schema.sql`, `0002_rls_policies.sql`,
    `0003_seed_demo.sql`, `0004_integration.sql`.
 3. **Authentication → Sign In / Providers:** enable **Anonymous sign-ins**
-   (patients) and keep **Email** enabled (issuers use magic links). Enabling
-   CAPTCHA / Turnstile for anonymous sign-ins is strongly recommended.
+   (patients) and keep **Email** enabled (issuers use magic links).
+
+   **Leave CAPTCHA / Turnstile OFF** (Authentication → Attack Protection). The
+   app does not send a captcha token, so enabling it makes every patient
+   sign-in fail. Anonymous sign-in is an open endpoint without it — rate
+   limited to 30/hour per IP, which is acceptable for a testnet demo but not
+   for anything public. Closing that properly means adding a Turnstile widget
+   and passing the token to `signInAnonymously()`.
 4. **Authentication → URL Configuration:** set the Site URL, and add
    `http://localhost:3000/issuer` plus your deployed `/issuer` URL to Redirect URLs.
 5. Copy `.env.local.example` to `.env.local` and fill in
