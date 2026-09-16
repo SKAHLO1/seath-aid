@@ -4,14 +4,16 @@
 // Issuer side of issuance.
 //
 // The medical values typed here stay in this browser. The credential is built
-// locally with the contract's pure circuits; Supabase receives only the opaque
-// commitment and revocation handle plus a display label. The package shown on
-// success DOES contain the values — it is for the patient only, and is cleared
-// from the page as soon as the issuer moves on.
+// locally with the contract's pure circuits; the chain receives only the opaque
+// commitment, and Supabase only that commitment, the revocation handle, and a
+// display label. The package shown on success DOES contain the values — it is
+// for the patient only, and is cleared from the page as soon as the issuer
+// moves on.
 
 import { AlertTriangle, Check, Copy } from "lucide-react";
 import { useMemo, useState } from "react";
 
+import { pureCircuits } from "@/contracts/src/managed/verihealth/contract/index.js";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -23,9 +25,14 @@ import {
   buildCredential,
   encodePackage,
 } from "@/lib/midnight/credential-package";
-import { getSession } from "@/lib/midnight/session";
+import { demoIssuerForPublicKey } from "@/lib/midnight/demo-issuer";
 import { issueCredential } from "@/lib/supabase/issuer";
 import type { IssuerRow } from "@/lib/supabase/types";
+import { useVeriHealth } from "./verihealth-provider";
+
+// Lazy for the same reason as in verihealth-provider.tsx: this module reaches a
+// Node native addon and must stay out of Next's prerender pass.
+const loadChain = () => import("@/lib/midnight/browser/chain");
 
 const INTEGER = /^[0-9]{1,12}$/;
 
@@ -37,17 +44,19 @@ function parseDate(value: string): Date | null {
 
 export function IssueCredentialForm({
   issuers,
-  claimTypeFor,
   onIssued,
 }: {
   issuers: IssuerRow[];
-  /** The claim type a demo issuer attests, or null for a non-demo issuer. */
-  claimTypeFor: (issuer: IssuerRow) => ClaimType | null;
   onIssued: () => void;
 }) {
+  const { chain, refreshLedger } = useVeriHealth();
+
   const [issuerId, setIssuerId] = useState(issuers[0]?.id ?? "");
   const issuer = issuers.find((i) => i.id === issuerId) ?? null;
-  const fixedClaimType = issuer ? claimTypeFor(issuer) : null;
+  // A demo issuer attests exactly one claim type, and is the only kind this
+  // console can sign for on chain.
+  const demoIssuer = issuer ? demoIssuerForPublicKey(issuer.public_key) : undefined;
+  const fixedClaimType = demoIssuer?.claimType ?? null;
 
   const [chosenClaimType, setChosenClaimType] = useState<ClaimType>("vaccination");
   const claimType = fixedClaimType ?? chosenClaimType;
@@ -59,7 +68,7 @@ export function IssueCredentialForm({
   const [date, setDate] = useState(""); // completion / measured / expiry
   const [active, setActive] = useState(true);
 
-  const [busy, setBusy] = useState(false);
+  const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [issuedPackage, setIssuedPackage] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
@@ -91,6 +100,13 @@ export function IssueCredentialForm({
     if (!issuer) return;
     setError(null);
 
+    if (!chain) return setError("Connect a wallet before issuing.");
+    if (!demoIssuer) {
+      return setError(
+        "This console can only sign on-chain issuance for the demo issuers.",
+      );
+    }
+
     const parsedDate = parseDate(date);
     if (!parsedDate) return setError(`${fields.date} is required.`);
     if (fields.amount && !INTEGER.test(amount)) {
@@ -106,16 +122,22 @@ export function IssueCredentialForm({
       input = { claimType, policyRef: code, active, expiryDate: parsedDate };
     }
 
-    setBusy(true);
     try {
-      const { runtime } = await getSession();
       const pkg = buildCredential(
-        runtime.pureCircuits,
+        pureCircuits,
         { name: issuer.name, publicKeyHex: issuer.public_key },
         input,
         label,
       );
-      // Only hashes and the label leave the browser.
+
+      // Chain first. A Supabase row whose commitment is not in the on-chain
+      // tree describes a credential nobody can prove; the reverse is merely a
+      // record the patient can re-import.
+      setBusy("Publishing the commitment on chain. This takes a few minutes.");
+      const { issueCredentialOnChain } = await loadChain();
+      await issueCredentialOnChain(chain, demoIssuer, pkg.commitment);
+
+      setBusy("Recording the credential…");
       await issueCredential({
         issuerId: issuer.id,
         walletAddress: wallet,
@@ -124,11 +146,13 @@ export function IssueCredentialForm({
         commitment: pkg.commitment,
         displayLabel: pkg.displayLabel,
       });
+
       setIssuedPackage(encodePackage(pkg));
       // The values are now inside the package; clear the form fields.
       setCode("");
       setAmount("");
       setDate("");
+      await refreshLedger();
       onIssued();
     } catch (err) {
       setError(
@@ -137,7 +161,7 @@ export function IssueCredentialForm({
           : "The credential could not be issued.",
       );
     } finally {
-      setBusy(false);
+      setBusy(null);
     }
   }
 
@@ -153,14 +177,14 @@ export function IssueCredentialForm({
       <div className="space-y-3" data-testid="issued-package">
         <p className="flex items-center gap-2 font-medium">
           <Check className="h-4 w-4 text-emerald-600" />
-          Credential issued and recorded
+          Credential issued on chain and recorded
         </p>
         <div className="flex items-start gap-2 rounded-md border border-amber-500/40 bg-amber-500/5 p-3 text-sm">
           <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-amber-600" />
           <span>
             This package contains the medical details. Send it only to the patient.
-            It was <strong>not</strong> stored on the server and cannot be shown
-            again once you leave this screen.
+            It was <strong>not</strong> stored on the server or on chain, and cannot
+            be shown again once you leave this screen.
           </span>
         </div>
         <Textarea readOnly value={issuedPackage} rows={4} spellCheck={false} />
@@ -214,10 +238,10 @@ export function IssueCredentialForm({
         </div>
       </div>
 
-      {issuer && fixedClaimType === null && (
-        <p className="text-xs text-muted-foreground">
-          This is not a demo issuer. Its credentials are recorded, but patients
-          cannot prove them until the app uses the deployed contract.
+      {issuer && !demoIssuer && (
+        <p className="text-xs text-destructive">
+          This is not a demo issuer. Issuing requires its signing key, which this
+          console does not hold, so the credential cannot be put on chain here.
         </p>
       )}
 
@@ -301,10 +325,17 @@ export function IssueCredentialForm({
       </div>
 
       {error && <p className="text-sm text-destructive">{error}</p>}
+      {busy && <p className="text-sm text-muted-foreground">{busy}</p>}
 
-      <Button type="submit" disabled={busy || !issuer}>
+      <Button type="submit" disabled={busy !== null || !issuer || !demoIssuer || !chain}>
         {busy ? "Issuing…" : "Issue credential"}
       </Button>
+      {!busy && (
+        <p className="text-xs text-muted-foreground">
+          Issuing submits a transaction to Midnight. It costs DUST and takes a few
+          minutes.
+        </p>
+      )}
     </form>
   );
 }

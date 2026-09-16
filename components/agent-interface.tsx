@@ -58,9 +58,27 @@ const COMMITS = [
   { hash: "e2c9d56", msg: "proofCount incremented → 3,847",         time: "1h ago"   },
 ]
 
-// Activity graph data — 7 cols x 5 rows like GitHub contributions
+// Activity graph data — 7 cols x 5 rows like GitHub contributions.
+//
+// DETERMINISTIC ON PURPOSE. This runs at module load, which happens once on the
+// server during prerender and again in the browser. Math.random() therefore
+// produced two different grids, and every cell's background colour mismatched
+// during hydration — React discards the server HTML and re-renders when that
+// happens. A fixed-seed generator gives the same varied-looking pattern on both
+// sides. Anything random here must be generated after mount instead.
+function seededRandom(seed: number): () => number {
+  let state = seed >>> 0
+  return () => {
+    // Numerical Recipes LCG: same sequence everywhere, no dependencies.
+    state = (state * 1664525 + 1013904223) >>> 0
+    return state / 0x100000000
+  }
+}
+
+const activityRandom = seededRandom(20260916)
+
 const ACTIVITY_SEED = Array.from({ length: 35 }, () => ({
-  level: Math.random() > 0.4 ? Math.floor(Math.random() * 4) + 1 : 0,
+  level: activityRandom() > 0.4 ? Math.floor(activityRandom() * 4) + 1 : 0,
 }))
 
 // ── Sub-components ────────────────────────────────────────────────────────────
@@ -463,7 +481,13 @@ export function AgentInterface({ revealDelay = 0 }: { revealDelay?: number }) {
 
   return (
     <div
-      className="relative z-10 flex items-center justify-center pointer-events-none select-none px-3 md:px-8 w-full md:absolute md:inset-0 md:pt-[220px] md:pb-[8%]"
+      // Normal document flow at every width. This previously carried
+      // `md:absolute md:inset-0 md:pt-[220px] md:pb-[8%]`, from a design where
+      // the console overlaid a hero. Here it is its own section, so from `md`
+      // up it escaped that section (absolute against the nearest positioned
+      // ancestor — the hero, which is `relative` for the glitch background),
+      // left its own section zero-height, and covered the hero text.
+      className="relative z-10 flex items-center justify-center pointer-events-none select-none px-3 md:px-8 w-full"
       style={{ paddingTop: "16px", paddingBottom: "16px" }}
     >
       <div style={{

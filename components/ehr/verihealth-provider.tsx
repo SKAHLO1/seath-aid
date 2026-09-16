@@ -1,5 +1,13 @@
 "use client";
 // SPDX-License-Identifier: Apache-2.0
+//
+// Shared state for the dashboard, issuer console and verifier view.
+//
+// Everything here is live. There is no demo identity and no in-browser ledger:
+// a wallet must be connected, the contract must be deployed and configured, and
+// every issuance, revocation and proof is a signed transaction that costs DUST
+// and takes minutes. Where that is slow or expensive, the UI says so rather
+// than showing a plausible result.
 
 import React, {
   createContext,
@@ -11,128 +19,162 @@ import React, {
   useState,
 } from "react";
 
+import type { Ledger } from "@/contracts/src/managed/verihealth/contract/index.js";
+import type { ChainContext, ProofOptions } from "@/lib/midnight/browser/chain";
 import type { ClaimType } from "@/lib/midnight/claim-types";
-import type {
-  HeldCredential,
-  ProofOutcome,
-  VeriHealthRuntime,
-} from "@/lib/midnight/runtime";
+import {
+  type LedgerSummary,
+  ledgerView,
+  summariseLedger,
+} from "@/lib/midnight/ledger-view";
+import { resolveOnChainConfig } from "@/lib/midnight/deployment";
+import type { HeldCredential, ProofOutcome } from "@/lib/midnight/private-state";
 import {
   type PendingCredential,
-  getSession,
   importCredentialPackage,
   loadHolderCredentials,
 } from "@/lib/midnight/session";
 import {
-  DEMO_WALLET,
   type MidnightWalletState,
-  connectBrowserWallet,
+  connectSession,
   isBrowserWalletAvailable,
 } from "@/lib/midnight/wallet";
 import { isSupabaseConfigured } from "@/lib/supabase/client";
-import {
-  type ProofLogEntry,
-  listProofs,
-  markRevokedLocally,
-  recordProof,
-} from "@/lib/supabase/proof-log";
+import { type ProofLogEntry, listProofs, recordProof } from "@/lib/supabase/proof-log";
 import type { CredentialWithIssuer } from "@/lib/supabase/types";
 
-type ProofOptions = {
-  requiredDoses?: bigint;
-  threshold?: bigint;
-  requireBelow?: boolean;
-};
+// The chain module is imported lazily, never at module scope.
+//
+// It reaches levelPrivateStateProvider, which resolves to `classic-level` — a
+// NODE NATIVE addon — when evaluated on the server. Next prerenders even a
+// "use client" page at build time, so a static import fails the build with
+// "No native build was found for platform=win32 ... runtime=electron".
+// Deferring to a dynamic import inside the handlers keeps that graph out of the
+// SSR pass. The pure Ledger helpers above are safe to import statically.
+const loadChain = () => import("@/lib/midnight/browser/chain");
 
 type VeriHealthContextValue = {
-  /** "demo" self-issues credentials in-tab; "supabase" loads issued ones. */
-  mode: "demo" | "supabase";
-  status: "loading" | "ready" | "error";
+  /**
+   * "unconfigured" — no contract address or no Supabase; nothing can work.
+   * "disconnected" — waiting for a wallet.
+   * "connecting"   — attaching to the deployed contract.
+   * "ready"        — chain is open.
+   */
+  status: "unconfigured" | "disconnected" | "connecting" | "ready" | "error";
   error: string | null;
+  /** Live handle on the deployed contract, once a wallet is connected. */
+  chain: ChainContext | null;
+  /** The contract's public ledger as last read. */
+  ledger: Ledger | null;
+  ledgerSummary: LedgerSummary | null;
+  refreshLedger: () => Promise<void>;
+
+  wallet: MidnightWalletState | null;
+  walletAvailable: boolean;
+  connectWallet: () => Promise<void>;
+
   credentials: HeldCredential[];
-  /** Supabase mode: recorded credentials this browser cannot prove yet. */
   pending: PendingCredential[];
   credentialsLoading: boolean;
   credentialsError: string | null;
   proofs: ProofLogEntry[];
-  wallet: MidnightWalletState | null;
-  /** "wallet" = a browser wallet (1AM by default), "demo" = the demo identity. */
-  walletKind: "wallet" | "demo" | null;
-  walletAvailable: boolean;
-  connectWallet: () => Promise<void>;
-  useDemoWallet: () => void;
   importCredential: (code: string) => Promise<void>;
   refreshCredentials: () => Promise<void>;
+
+  /** What the current transaction is doing, for a UI that waits minutes. */
+  txStatus: string | null;
   generateProof: (
     credentialId: string,
     verifierName: string,
     options?: ProofOptions,
   ) => Promise<{ outcome: ProofOutcome; reference: string }>;
-  revokeCredential: (credentialId: string) => Promise<void>;
   isRevoked: (credentialId: string) => boolean;
-  ledgerSummary: {
-    issuers: number;
-    revoked: number;
-    nullifiers: number;
-    proofs: number;
-  } | null;
 };
 
 const VeriHealthContext = createContext<VeriHealthContextValue | null>(null);
 
 export function VeriHealthProvider({ children }: { children: React.ReactNode }) {
-  const mode: "demo" | "supabase" = isSupabaseConfigured() ? "supabase" : "demo";
+  const config = useMemo(() => {
+    try {
+      return resolveOnChainConfig();
+    } catch {
+      return null;
+    }
+  }, []);
+  const supabaseReady = isSupabaseConfigured();
 
-  const [runtime, setRuntime] = useState<VeriHealthRuntime | null>(null);
-  const [status, setStatus] = useState<"loading" | "ready" | "error">("loading");
-  const [error, setError] = useState<string | null>(null);
+  const [status, setStatus] = useState<VeriHealthContextValue["status"]>(
+    config && supabaseReady ? "disconnected" : "unconfigured",
+  );
+  const [error, setError] = useState<string | null>(
+    config && supabaseReady
+      ? null
+      : !config
+        ? "No contract is configured. Set NEXT_PUBLIC_MIDNIGHT_CONTRACT_ADDRESS to the deployed contract address."
+        : "Supabase is not configured, so issued credentials cannot be loaded. Set NEXT_PUBLIC_SUPABASE_URL and NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY.",
+  );
+
+  const [chain, setChain] = useState<ChainContext | null>(null);
+  const [ledger, setLedger] = useState<Ledger | null>(null);
+  const [wallet, setWallet] = useState<MidnightWalletState | null>(null);
+  const [walletAvailable, setWalletAvailable] = useState(false);
+
   const [credentials, setCredentials] = useState<HeldCredential[]>([]);
   const [pending, setPending] = useState<PendingCredential[]>([]);
   const [revokedIds, setRevokedIds] = useState<Set<string>>(new Set());
   const [credentialsLoading, setCredentialsLoading] = useState(false);
   const [credentialsError, setCredentialsError] = useState<string | null>(null);
   const [proofs, setProofs] = useState<ProofLogEntry[]>([]);
-  const [wallet, setWallet] = useState<MidnightWalletState | null>(null);
-  const [walletKind, setWalletKind] = useState<"wallet" | "demo" | null>(null);
-  const [walletAvailable, setWalletAvailable] = useState(false);
+  const [txStatus, setTxStatus] = useState<string | null>(null);
   const [tick, setTick] = useState(0);
   const records = useRef<CredentialWithIssuer[]>([]);
 
-  // Boot the contract runtime. In demo mode this also self-issues the demo
-  // credentials through the real issuance circuit.
-  useEffect(() => {
-    let cancelled = false;
-    (async () => {
-      try {
-        const { runtime: rt, credentials: held } = await getSession();
-        if (cancelled) return;
-        setRuntime(rt);
-        setCredentials(held);
-        setStatus("ready");
-      } catch (e) {
-        if (cancelled) return;
-        // Deliberately generic: runtime errors can echo circuit inputs.
-        setError("Could not start the Midnight contract runtime in this browser.");
-        setStatus("error");
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, []);
-
+  // Extensions inject into the page after load, so check on mount.
   useEffect(() => {
     setWalletAvailable(isBrowserWalletAvailable());
   }, []);
 
-  // Supabase mode: credentials belong to a wallet, so they load once an
-  // identity is chosen, and reload whenever it changes.
+  const refreshLedger = useCallback(async () => {
+    if (!chain) return;
+    const { readLedger } = await loadChain();
+    setLedger(await readLedger(chain.providers, chain.contractAddress));
+  }, [chain]);
+
+  const connectWallet = useCallback(async () => {
+    if (!config) return;
+    setStatus("connecting");
+    setError(null);
+    try {
+      const { openChain, readLedger } = await loadChain();
+      const session = await connectSession();
+      const ctx = await openChain(config, session);
+      const l = await readLedger(ctx.providers, ctx.contractAddress);
+      setChain(ctx);
+      setLedger(l);
+      setWallet({
+        address: session.address,
+        coinPublicKey: session.shieldedCoinPublicKey,
+        encryptionPublicKey: session.shieldedEncryptionPublicKey,
+        walletName: session.walletName,
+      });
+      setStatus("ready");
+    } catch (e) {
+      setStatus("error");
+      // Connector and indexer errors are about configuration, not user data,
+      // so they are safe to show and usually the only clue to what is wrong.
+      setError(e instanceof Error ? e.message : "Could not connect to the contract.");
+      throw e;
+    }
+  }, [config]);
+
+  // Credentials belong to a wallet and are checked against the chain, so they
+  // load once both exist, and reload whenever either changes.
   const refreshCredentials = useCallback(async () => {
-    if (mode !== "supabase" || !runtime || !wallet) return;
+    if (!wallet || !ledger) return;
     setCredentialsLoading(true);
     setCredentialsError(null);
     try {
-      const loaded = await loadHolderCredentials(runtime, wallet.address);
+      const loaded = await loadHolderCredentials(wallet.address, ledgerView(ledger));
       records.current = loaded.records;
       setCredentials(loaded.credentials);
       setPending(loaded.pending);
@@ -147,13 +189,12 @@ export function VeriHealthProvider({ children }: { children: React.ReactNode }) 
     } finally {
       setCredentialsLoading(false);
     }
-  }, [mode, runtime, wallet]);
+  }, [wallet, ledger]);
 
   useEffect(() => {
     void refreshCredentials();
   }, [refreshCredentials]);
 
-  // Refresh the proof history whenever a proof is generated.
   useEffect(() => {
     if (credentials.length === 0) {
       setProofs([]);
@@ -162,123 +203,95 @@ export function VeriHealthProvider({ children }: { children: React.ReactNode }) 
     listProofs(credentials.map((c) => c.id)).then(setProofs).catch(() => {});
   }, [credentials, tick]);
 
-  const connectWallet = useCallback(async () => {
-    const state = await connectBrowserWallet();
-    setWallet(state);
-    setWalletKind("wallet");
-  }, []);
-
-  const useDemoWallet = useCallback(() => {
-    setWallet(DEMO_WALLET);
-    setWalletKind("demo");
-  }, []);
-
   const importCredential = useCallback(
     async (code: string) => {
-      if (mode !== "supabase") {
-        throw new Error("Credential packages are only used when Supabase is configured.");
-      }
-      if (!runtime || !wallet) throw new Error("Choose an identity first.");
-      await importCredentialPackage(runtime, code, records.current);
+      if (!wallet) throw new Error("Connect your wallet first.");
+      await importCredentialPackage(code, records.current);
       await refreshCredentials();
     },
-    [mode, runtime, wallet, refreshCredentials],
+    [wallet, refreshCredentials],
   );
 
   const generateProof = useCallback(
     async (credentialId: string, verifierName: string, options: ProofOptions = {}) => {
-      if (!runtime) throw new Error("Contract runtime is not ready.");
+      if (!chain) throw new Error("Connect your wallet first.");
       const credential = credentials.find((c) => c.id === credentialId);
       if (!credential) throw new Error("Credential not found.");
 
-      const outcome = await runtime.generateProof(credential, verifierName, options);
+      setTxStatus(
+        "Proving in the circuit and submitting the transaction. This takes a few minutes.",
+      );
       try {
-        const entry = await recordProof({
-          credentialId: credential.id,
-          nullifier: outcome.nullifier,
-          verifierName,
-          claimType: credential.claimType,
-          result: outcome.result,
-        });
-        return { outcome, reference: entry.proof_reference };
+        const { proveClaimOnChain } = await loadChain();
+        const outcome = await proveClaimOnChain(chain, credential, verifierName, options);
+        setTxStatus("Proof settled. Recording the reference…");
+        try {
+          const entry = await recordProof({
+            credentialId: credential.id,
+            nullifier: outcome.nullifier,
+            verifierName,
+            claimType: credential.claimType,
+            result: outcome.result,
+          });
+          return { outcome, reference: entry.proof_reference };
+        } finally {
+          // The nullifier is spent on chain either way.
+          void refreshLedger();
+          setTick((t) => t + 1);
+        }
       } finally {
-        // The ledger changed either way (the nullifier is spent).
-        setTick((t) => t + 1);
+        setTxStatus(null);
       }
     },
-    [runtime, credentials],
+    [chain, credentials, refreshLedger],
   );
 
-  const revokeCredential = useCallback(
-    async (credentialId: string) => {
-      if (mode === "supabase") {
-        throw new Error("Revoke credentials from the issuer console.");
-      }
-      if (!runtime) throw new Error("Contract runtime is not ready.");
-      const credential = credentials.find((c) => c.id === credentialId);
-      if (!credential) throw new Error("Credential not found.");
-
-      await runtime.revoke(credential.claimType, credential.handle);
-      markRevokedLocally(credentialId);
-      setTick((t) => t + 1);
-    },
-    [mode, runtime, credentials],
-  );
-
-  // Revocation status comes from the ledger, and in Supabase mode also from the
-  // recorded flag, so a revocation made in another browser still shows.
+  // Revocation comes from the chain, and also from the recorded flag so a
+  // revocation made elsewhere shows before the next ledger read.
   const isRevoked = useCallback(
     (credentialId: string) => {
       if (revokedIds.has(credentialId)) return true;
-      if (!runtime) return false;
       const credential = credentials.find((c) => c.id === credentialId);
-      if (!credential) return false;
+      if (!credential || !ledger) return false;
       void tick;
       try {
-        return runtime.isRevoked(credential.handle);
+        return ledgerView(ledger).isRevoked(credential.handle);
       } catch {
         return false;
       }
     },
-    [runtime, credentials, revokedIds, tick],
+    [credentials, revokedIds, ledger, tick],
   );
 
   const ledgerSummary = useMemo(() => {
-    if (!runtime || status !== "ready") return null;
-    void tick; // recompute after each on-chain write
+    if (!ledger) return null;
     try {
-      const l = runtime.ledger;
-      return {
-        issuers: Number(l.registeredIssuers.size()),
-        revoked: Number(l.revocationRegistry.size()),
-        nullifiers: Number(l.usedNullifiers.size()),
-        proofs: Number(l.proofCount),
-      };
+      return summariseLedger(ledger);
     } catch {
       return null;
     }
-  }, [runtime, status, tick]);
+  }, [ledger]);
 
   const value: VeriHealthContextValue = {
-    mode,
     status,
     error,
+    chain,
+    ledger,
+    ledgerSummary,
+    refreshLedger,
+    wallet,
+    walletAvailable,
+    connectWallet,
     credentials,
     pending,
     credentialsLoading,
     credentialsError,
     proofs,
-    wallet,
-    walletKind,
-    walletAvailable,
-    connectWallet,
-    useDemoWallet,
     importCredential,
     refreshCredentials,
+    txStatus,
     generateProof,
-    revokeCredential,
     isRevoked,
-    ledgerSummary,
   };
 
   return (

@@ -16,6 +16,7 @@
 import { useEffect, useState } from "react";
 
 import type { WalletSession } from "@/lib/midnight/browser/connector";
+import { getStateKey } from "@/lib/midnight/browser/state-key";
 import type { TxSubmittedDetail } from "@/lib/midnight/browser/wallet-provider";
 import { resolveDeployTarget } from "@/lib/midnight/deployment";
 
@@ -278,7 +279,6 @@ export default function DeployPage() {
   const [night, setNight] = useState<bigint | null>(null);
   const [address, setAddress] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [password, setPassword] = useState("");
   const [rawResult, setRawResult] = useState<string | null>(null);
   const [recovered, setRecovered] = useState<string[] | null>(null);
   const [scannedDbs, setScannedDbs] = useState<string[]>([]);
@@ -401,7 +401,11 @@ export default function DeployPage() {
       const deployed = await deployNewContract({
         config: target,
         session,
-        storagePassword: password,
+        // This browser's own passphrase, shared with the dashboard and issuer
+        // console so they all open the same private-state store. A value typed
+        // here would have to be retyped identically everywhere, and a mismatch
+        // surfaces much later as an unreadable store.
+        storagePassword: getStateKey(),
       });
 
       // Log the WHOLE result before touching it. A deploy costs real DUST and
@@ -563,30 +567,16 @@ docker run -d --name verihealth-proof-server --restart unless-stopped \
         </li>
 
         <li style={{ marginTop: 18 }}>
-          <label style={S.label}>
-            2. Private-state password (16+ chars, encrypts witness data in IndexedDB)
-            <input
-              type="password"
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              style={S.input}
-              placeholder="same value as MIDNIGHT_PRIVATE_STATE_PASSWORD"
-            />
-          </label>
-        </li>
-
-        <li style={{ marginTop: 18 }}>
           <button
             onClick={deploy}
             disabled={
               !session ||
-              password.length < 16 ||
               phase === "deploying" ||
               (pending !== null && !confirmRedeploy)
             }
             style={S.btn}
           >
-            {phase === "deploying" ? "Deploying — proving 6 circuits…" : "3. Deploy contract"}
+            {phase === "deploying" ? "Deploying — proving 6 circuits…" : "2. Deploy contract"}
           </button>
           {phase === "deploying" && !pending && (
             <p style={S.dim}>

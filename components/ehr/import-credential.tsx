@@ -32,8 +32,8 @@ const REASON_TEXT: Record<PendingCredential["reason"], string> = {
     "Waiting for the credential package from your issuer. Paste it below to use this credential in this browser.",
   "package-mismatch":
     "The package saved in this browser no longer matches the issued record. Import the issuer's package again.",
-  "non-demo-issuer":
-    "Issued by a non-demo issuer. It cannot be proven until the app uses the deployed contract.",
+  "not-on-chain":
+    "Recorded, but its commitment has not appeared in the on-chain credential tree yet. The issuer's transaction may still be settling.",
 };
 
 export function PendingCredentialCard({ credential }: { credential: PendingCredential }) {

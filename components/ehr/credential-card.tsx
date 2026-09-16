@@ -16,7 +16,7 @@ import {
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { CLAIM_TYPE_META } from "@/lib/midnight/claim-types";
-import type { HeldCredential } from "@/lib/midnight/runtime";
+import type { HeldCredential } from "@/lib/midnight/private-state";
 import { ProofNotRecordedError } from "@/lib/supabase/proof-log";
 import { useVeriHealth } from "./verihealth-provider";
 
@@ -26,7 +26,7 @@ type Outcome = {
 };
 
 export function CredentialCard({ credential }: { credential: HeldCredential }) {
-  const { generateProof, isRevoked } = useVeriHealth();
+  const { generateProof, isRevoked, txStatus } = useVeriHealth();
   const meta = CLAIM_TYPE_META[credential.claimType];
   const revoked = isRevoked(credential.id);
 
@@ -63,10 +63,16 @@ export function CredentialCard({ credential }: { credential: HeldCredential }) {
         );
         return;
       }
+      // chain.ts raises specific, non-sensitive errors for the cases we can
+      // detect before paying for proving (revoked, not yet on chain, nullifier
+      // already spent, no DUST). Those are worth showing verbatim; anything
+      // else falls back to a generic line that cannot echo circuit inputs.
       setFailure(
-        revoked
-          ? "This credential has been revoked by its issuer. No proof can be generated."
-          : "The contract rejected this proof. The credential may be revoked, altered, or already used with this verifier.",
+        e instanceof Error && e.message.length < 300
+          ? e.message
+          : revoked
+            ? "This credential has been revoked by its issuer. No proof can be generated."
+            : "The contract rejected this proof. The credential may be revoked, altered, or already used with this verifier.",
       );
     } finally {
       setBusy(false);
@@ -158,6 +164,20 @@ export function CredentialCard({ credential }: { credential: HeldCredential }) {
         >
           {busy ? "Generating proof…" : "Generate proof"}
         </Button>
+
+        {/* Proving and settling take minutes and cost DUST. Saying so beats a
+            spinner that looks stuck. */}
+        {busy && (
+          <p className="text-xs text-muted-foreground" data-testid={`tx-${credential.id}`}>
+            {txStatus ?? "Working…"}
+          </p>
+        )}
+        {!busy && !outcome && !failure && (
+          <p className="text-xs text-muted-foreground">
+            Generating a proof submits a transaction to Midnight. It costs DUST and
+            takes a few minutes.
+          </p>
+        )}
 
         {outcome && (
           <div
