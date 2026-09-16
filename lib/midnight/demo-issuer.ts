@@ -13,7 +13,10 @@
 // and the issuer registry would be a governed allowlist, not self-service.
 // ============================================================================
 
+import { pureCircuits } from "@/contracts/src/managed/verihealth/contract/index.js";
+
 import type { ClaimType } from "./claim-types";
+import { bytes32, toHex } from "./private-state";
 
 export type DemoIssuer = {
   id: string;
@@ -53,4 +56,22 @@ export function demoIssuerFor(claimType: ClaimType): DemoIssuer {
   const issuer = DEMO_ISSUERS.find((i) => i.claimType === claimType);
   if (!issuer) throw new Error(`No demo issuer configured for ${claimType}`);
   return issuer;
+}
+
+/**
+ * The issuer's on-chain public key, hex.
+ *
+ * deriveIssuerPk is a pure circuit (`proof: false`), so this is plain local
+ * arithmetic — no contract instance, no transaction, no wallet. It is the same
+ * value registerIssuer() writes to the ledger, and the same one seeded into
+ * Supabase by 0003_seed_demo.sql.
+ */
+export function demoIssuerPublicKey(issuer: DemoIssuer): string {
+  return toHex(pureCircuits.deriveIssuerPk(bytes32(issuer.secretLabel)));
+}
+
+/** The demo issuer with this public key, or undefined for any other issuer. */
+export function demoIssuerForPublicKey(publicKeyHex: string): DemoIssuer | undefined {
+  const wanted = publicKeyHex.toLowerCase();
+  return DEMO_ISSUERS.find((issuer) => demoIssuerPublicKey(issuer) === wanted);
 }

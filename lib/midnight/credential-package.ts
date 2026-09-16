@@ -14,6 +14,8 @@
 // copy/paste, stored only in the patient's browser, and must never be logged,
 // sent to Supabase, or included in an error message.
 
+import type { PureCircuits } from "@/contracts/src/managed/verihealth/contract/index.js";
+
 import type { ClaimType } from "./claim-types";
 import { CLAIM_TYPES, toEpochDays } from "./claim-types";
 import {
@@ -21,17 +23,15 @@ import {
   fromHex,
   toHex,
   type CoveragePolicy,
+  type HeldCredential,
   type LabResult,
   type VaccinationRecord,
 } from "./private-state";
-import type { HeldCredential, VeriHealthRuntime } from "./runtime";
 
 export const PACKAGE_PREFIX = "vhcred1:";
 
 const HEX32 = /^[0-9a-f]{64}$/;
 const DECIMAL = /^(0|[1-9][0-9]{0,19})$/;
-
-type PureCircuits = VeriHealthRuntime["pureCircuits"];
 
 export type CredentialPackageV1 = {
   v: 1;
@@ -165,9 +165,10 @@ function randomNonce(): Uint8Array {
 /**
  * Builds a credential in the issuer's browser.
  *
- * Uses exactly the pure circuits the demo issuance uses (lib/midnight/demo-data.ts)
- * so a package built here proves under the same contract. The nonce is fresh
- * randomness, so every credential gets a distinct revocation handle.
+ * Uses the contract's own pure circuits, so the commitment recorded here is
+ * byte-identical to the one the proving circuit recomputes from the witnesses.
+ * The nonce is fresh randomness, so every credential gets a distinct
+ * revocation handle.
  */
 export function buildCredential(
   pure: PureCircuits,
@@ -326,7 +327,7 @@ export function verifyPackage(
   );
 }
 
-/** The runtime's view of an imported credential. `id` is the Supabase row id. */
+/** The holder's view of an imported credential. `id` is the Supabase row id. */
 export function toHeldCredential(
   pkg: CredentialPackageV1,
   id: string,

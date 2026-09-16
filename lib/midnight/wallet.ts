@@ -31,7 +31,7 @@ export type MidnightWalletState = {
   address: string;
   coinPublicKey: string;
   encryptionPublicKey?: string;
-  /** Display name of the connected wallet, e.g. "1AM". Absent for the demo identity. */
+  /** Display name of the connected wallet, e.g. "1AM". */
   walletName?: string;
 };
 
@@ -100,11 +100,7 @@ export async function getServiceUris(): Promise<Record<string, string>> {
   };
 }
 
-/**
- * Deterministic stand-in identity so anyone without a wallet installed can
- * still walk the full local flow. Clearly labelled as a demo identity in the UI.
- */
-export const DEMO_WALLET: MidnightWalletState = {
-  address: "mn_demo1qq7x9c0k3demoholderwalletaddress0000000000",
-  coinPublicKey: "0".repeat(64),
-};
+// There is deliberately NO demo identity here any more. Every credential and
+// proof is an on-chain transaction signed by a real wallet, so a stand-in
+// address could not hold a credential or pay for a proof — offering one would
+// only produce a dashboard that looks connected and does nothing.

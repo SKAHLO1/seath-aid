@@ -11,6 +11,8 @@
 
 import type { MerkleTreePath } from "@midnight-ntwrk/compact-runtime";
 
+import type { ClaimType } from "./claim-types";
+
 // ---------------------------------------------------------------------------
 // Witness record shapes, mirroring the structs in verihealth.compact
 // ---------------------------------------------------------------------------
@@ -41,6 +43,44 @@ export type PrivateState = {
   nonce: Uint8Array;
   issuerPk: Uint8Array;
   path: MerkleTreePath<Uint8Array>;
+};
+
+/**
+ * A credential as the holder's device knows it, including the private half.
+ *
+ * `id` is the Supabase row id. `handle` and `commitment` are opaque and public
+ * — both appear on chain. `secret` never leaves the device: it is staged into
+ * the private-state store immediately before a proof and supplied to the
+ * circuit as witnesses.
+ */
+export type HeldCredential = {
+  id: string;
+  claimType: ClaimType;
+  issuerName: string;
+  issuerPk: Uint8Array;
+  /** Opaque revocation handle, hex. Safe to store off-chain. */
+  handle: string;
+  /** On-chain Merkle leaf, hex. Safe to store off-chain. */
+  commitment: string;
+  displayLabel: string;
+  issuedAt: string;
+  /** The private witness payload. NEVER leaves the device. */
+  secret: {
+    nonce: Uint8Array;
+    record?: VaccinationRecord;
+    lab?: LabResult;
+    coverage?: CoveragePolicy;
+  };
+};
+
+/** Outcome of a proving circuit, once the transaction has settled. */
+export type ProofOutcome = {
+  result: boolean;
+  /** Hex nullifier written to the public ledger. */
+  nullifier: string;
+  /** Transaction that carried the proof. */
+  txId: string;
+  txHash: string;
 };
 
 /**
