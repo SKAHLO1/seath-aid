@@ -26,9 +26,35 @@ async function ensureAnonymousSession(client: SupabaseClient): Promise<void> {
 
   const { data: signedIn, error } = await client.auth.signInAnonymously();
   if (error || !signedIn.session) {
+    // Surface what Supabase actually said. An earlier version replaced every
+    // failure with a guess ("check anonymous sign-ins are enabled"), which sent
+    // people to the one setting that was already correct. Auth errors describe
+    // configuration, never user data, so they are safe to show.
+    const raw = error?.message ?? "no session returned";
+
+    if (/captcha/i.test(raw)) {
+      throw new Error(
+        "Supabase rejected the sign-in because CAPTCHA protection is enabled, " +
+          "and this app does not send a captcha token. Turn it off under " +
+          "Authentication → Attack Protection, or add a Turnstile widget and " +
+          "pass the token to signInAnonymously().",
+      );
+    }
+    if (/disabled|not enabled|signups? not allowed/i.test(raw)) {
+      throw new Error(
+        "Anonymous sign-ins are disabled for this project. Enable them under " +
+          `Authentication → Sign In / Providers. (Supabase said: ${raw})`,
+      );
+    }
+    if (/rate|too many|limit/i.test(raw)) {
+      throw new Error(
+        "Supabase is rate-limiting anonymous sign-ins from this IP (30/hour by " +
+          `default). Wait and retry. (Supabase said: ${raw})`,
+      );
+    }
     throw new Error(
-      "Could not start a Supabase session. Check that Anonymous sign-ins are " +
-        "enabled for this project (Authentication → Sign In / Providers).",
+      `Could not start a Supabase session: ${raw}` +
+        (error?.status ? ` (HTTP ${error.status})` : ""),
     );
   }
 }

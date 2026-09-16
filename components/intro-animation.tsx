@@ -2,113 +2,116 @@
 
 import { useEffect, useState } from "react"
 
-// SEATH AID. Nine slots rather than the original seven, so the per-letter
-// stagger below runs ~180ms longer end to end — the curtain and hero-reveal
-// timings are all derived from LETTERS.length, so they stay in sync.
+// SEATH AID. Nine slots; the per-letter stagger and the curtain timing are all
+// derived from LETTERS.length, so they stay in sync.
 //
-// The gap is a NON-BREAKING space ( ). Each character renders in its own
-// span, and a plain " " alone in a span is whitespace at the start and end of
-// its line box, which collapses to zero width — the word break would vanish and
-// the intro would read "SEATHAID".
+// The gap is a NON-BREAKING space. Each character renders in its own span, and
+// a plain " " alone in a span is whitespace at the start and end of its line
+// box, which collapses to zero width — the word break would vanish and the
+// intro would read "SEATHAID".
 const LETTERS = ["S", "E", "A", "T", "H", " ", "A", "I", "D"]
 
-const LETTER_IN_STAGGER  = 90    // ms between each letter appearing
-const LETTER_IN_DUR      = 700   // duration of each letter appear transition
-const HOLD_DURATION      = 300   // hold fully visible before exit
+// Roughly half the original durations. The hero sits behind the curtain until
+// it retracts, so every millisecond here is time the headline cannot be read.
+const LETTER_IN_STAGGER  = 45
+const LETTER_IN_DUR      = 400
+const HOLD_DURATION      = 150
 const LETTERS_IN_TOTAL   = LETTER_IN_STAGGER * (LETTERS.length - 1) + LETTER_IN_DUR + HOLD_DURATION
 
-const LETTER_OUT_STAGGER = 55    // ms between each letter disappearing
-const LETTER_OUT_DUR     = 450   // duration of each letter fade out
+const LETTER_OUT_STAGGER = 30
+const LETTER_OUT_DUR     = 300
 const LETTERS_OUT_TOTAL  = LETTER_OUT_STAGGER * (LETTERS.length - 1) + LETTER_OUT_DUR
 
-const CURTAIN_DELAY      = LETTERS_IN_TOTAL + 100
-const CURTAIN_DURATION   = 1300  // matches the CSS transition on the curtain div
-const ANIM_TOTAL         = CURTAIN_DELAY + LETTERS_OUT_TOTAL + 1400
+const CURTAIN_DELAY      = LETTERS_IN_TOTAL + 60
+const CURTAIN_DURATION   = 700
+const ANIM_TOTAL         = CURTAIN_DELAY + Math.max(CURTAIN_DURATION, LETTERS_OUT_TOTAL) + 200
 
-// Exported: moment the curtain finishes retracting — when the bg is fully visible
+/** Moment the curtain finishes retracting. */
 export const INTRO_DURATION_MS = CURTAIN_DELAY + CURTAIN_DURATION
-// Exported: ms before curtain fully done to start hero animations (overlap for smoothness)
-export const HERO_REVEAL_MS = CURTAIN_DELAY + CURTAIN_DURATION - 150
+/** When hero copy should start animating — slightly before the curtain clears. */
+export const HERO_REVEAL_MS = Math.max(0, INTRO_DURATION_MS - 250)
 
-type Phase = "idle" | "in" | "out" | "done"
+const SESSION_KEY = "seath-aid.introSeen"
 
-export function IntroAnimation({ onDone }: { onDone: () => void }) {
-  const [phase, setPhase] = useState<Phase>("idle")
-  const [curtainUp, setCurtainUp] = useState(false)
+/**
+ * The opening curtain.
+ *
+ * EVERY ANIMATION HERE IS CSS, deliberately. This component renders during SSR,
+ * and its curtain is an opaque full-screen layer: when the retraction was
+ * driven by React state, the page stayed covered until hydration finished, and
+ * stayed covered forever if JS never ran. CSS animations start at first paint
+ * and finish on schedule regardless, so the content underneath is guaranteed to
+ * be revealed. JS is now only used to unmount the finished layer and to skip
+ * the intro entirely — neither of which can hide anything if it fails.
+ */
+export function IntroAnimation({ onDone }: { onDone?: () => void }) {
+  const [gone, setGone] = useState(false)
 
   useEffect(() => {
-    // Tiny delay so the browser has painted before we start transitioning
-    const t0 = setTimeout(() => setPhase("in"), 80)
-    const t1 = setTimeout(() => setPhase("out"), LETTERS_IN_TOTAL)
-    const t2 = setTimeout(() => setCurtainUp(true), CURTAIN_DELAY)
-    const t3 = setTimeout(() => onDone(), HERO_REVEAL_MS)
-    const t4 = setTimeout(() => setPhase("done"), ANIM_TOTAL)
+    let seen = false
+    try {
+      seen = sessionStorage.getItem(SESSION_KEY) === "1"
+    } catch {
+      // Private mode or blocked storage: just play it.
+    }
+    const reduced = window.matchMedia("(prefers-reduced-motion: reduce)").matches
 
-    return () => { clearTimeout(t0); clearTimeout(t1); clearTimeout(t2); clearTimeout(t3); clearTimeout(t4) }
+    // Seen this session, or motion is unwelcome: remove it and let the hero go.
+    if (seen || reduced) {
+      setGone(true)
+      onDone?.()
+      return
+    }
+
+    try {
+      sessionStorage.setItem(SESSION_KEY, "1")
+    } catch {
+      /* ignore */
+    }
+
+    const t1 = setTimeout(() => onDone?.(), HERO_REVEAL_MS)
+    const t2 = setTimeout(() => setGone(true), ANIM_TOTAL)
+    return () => {
+      clearTimeout(t1)
+      clearTimeout(t2)
+    }
   }, [onDone])
 
-  if (phase === "done") return null
+  if (gone) return null
 
   return (
-    <div className="fixed inset-0 z-[100] pointer-events-none" aria-hidden="true">
-
-      {/* Gradient curtain — retracts upward, revealing mountains from bottom */}
+    <div className="seath-intro fixed inset-0 z-[100] pointer-events-none" aria-hidden="true">
+      {/* Curtain — retracts upward, revealing the page beneath. */}
       <div
-        className="absolute inset-x-0 top-0"
+        className="seath-curtain absolute inset-0"
         style={{
-          bottom: curtainUp ? "100%" : "0%",
-          transition: curtainUp ? "bottom 1.3s cubic-bezier(0.76, 0, 0.24, 1)" : "none",
           background: "#f5f4f1",
+          animationDelay: `${CURTAIN_DELAY}ms`,
+          animationDuration: `${CURTAIN_DURATION}ms`,
         }}
       />
 
       {/* SEATH AID letters */}
       <div className="absolute inset-0 flex items-center justify-center">
         <div className="flex" style={{ gap: "0.06em" }}>
-          {LETTERS.map((letter, i) => {
-            const inDelay  = i * LETTER_IN_STAGGER
-            const outDelay = i * LETTER_OUT_STAGGER
-
-            // idle → invisible starting position
-            const isIdle = phase === "idle"
-            const isIn   = phase === "in"
-            const isOut  = phase === "out"
-
-            const opacity    = isIdle ? 0 : isIn ? 1 : 0
-            const blur       = isIdle ? 36 : isIn ? 0 : 24
-            const translateY = isIdle ? 48 : isIn ? 0 : -20
-
-            const transition = isOut
-              ? `opacity ${LETTER_OUT_DUR}ms cubic-bezier(0.4,0,1,1) ${outDelay}ms,
-                 filter  ${LETTER_OUT_DUR}ms cubic-bezier(0.4,0,1,1) ${outDelay}ms,
-                 transform ${LETTER_OUT_DUR}ms cubic-bezier(0.4,0,1,1) ${outDelay}ms`
-              : isIn
-              ? `opacity ${LETTER_IN_DUR}ms cubic-bezier(0.16,1,0.3,1) ${inDelay}ms,
-                 filter  ${LETTER_IN_DUR}ms cubic-bezier(0.16,1,0.3,1) ${inDelay}ms,
-                 transform ${LETTER_IN_DUR}ms cubic-bezier(0.16,1,0.3,1) ${inDelay}ms`
-              : "none"
-
-            return (
-              <span
-                key={i}
-                className="font-sans font-bold text-[#111] leading-none select-none"
-                style={{
-                  fontSize: `calc((100vw - 64px) / ${LETTERS.length})`,
-                  letterSpacing: "0.05em",
-                  opacity,
-                  filter: `blur(${blur}px)`,
-                  transform: `translateY(${translateY}px)`,
-                  transition,
-                  willChange: "opacity, filter, transform",
-                }}
-              >
-                {letter}
-              </span>
-            )
-          })}
+          {LETTERS.map((letter, i) => (
+            <span
+              key={i}
+              className="font-sans font-bold text-[#111] leading-none select-none"
+              style={{
+                fontSize: `calc((100vw - 64px) / ${LETTERS.length})`,
+                letterSpacing: "0.05em",
+                willChange: "opacity, filter, transform",
+                animation:
+                  `seath-letter-in ${LETTER_IN_DUR}ms cubic-bezier(0.16,1,0.3,1) ${i * LETTER_IN_STAGGER}ms both, ` +
+                  `seath-letter-out ${LETTER_OUT_DUR}ms cubic-bezier(0.4,0,1,1) ${LETTERS_IN_TOTAL + i * LETTER_OUT_STAGGER}ms forwards`,
+              }}
+            >
+              {letter}
+            </span>
+          ))}
         </div>
       </div>
-
     </div>
   )
 }

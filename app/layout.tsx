@@ -15,6 +15,10 @@ const DESCRIPTION =
   'Patients hold medical facts privately and generate zero-knowledge proofs of specific claims via a Midnight Compact smart contract. Verifiers see pass or fail, never the underlying data.'
 
 export const metadata: Metadata = {
+  // Resolves the relative icon and OG URLs below into absolute ones, which is
+  // what crawlers and link unfurlers require. Set NEXT_PUBLIC_SITE_URL to the
+  // deployed origin on Vercel; localhost is only a sensible dev default.
+  metadataBase: new URL(process.env.NEXT_PUBLIC_SITE_URL ?? 'http://localhost:3000'),
   title: TITLE,
   description: DESCRIPTION,
   keywords: [
@@ -31,11 +35,20 @@ export const metadata: Metadata = {
     description: DESCRIPTION,
     type: 'website',
     siteName: 'Seath Aid',
+    images: [
+      {
+        url: '/og-image.png',
+        width: 1200,
+        height: 630,
+        alt: 'Seath Aid — proof without exposure',
+      },
+    ],
   },
   twitter: {
     card: 'summary_large_image',
     title: TITLE,
     description: DESCRIPTION,
+    images: ['/og-image.png'],
   },
   icons: {
     icon: [
@@ -46,10 +59,6 @@ export const metadata: Metadata = {
       {
         url: '/icon-dark-32x32.png',
         media: '(prefers-color-scheme: dark)',
-      },
-      {
-        url: '/icon.svg',
-        type: 'image/svg+xml',
       },
     ],
     apple: '/apple-icon.png',
