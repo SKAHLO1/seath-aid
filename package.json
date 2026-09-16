@@ -13,6 +13,7 @@
     "test:all": "pnpm test:contracts && pnpm test",
     "compact": "pnpm --filter @verihealth/contracts compact",
     "deploy:address": "esbuild scripts/address.mts --bundle --platform=node --format=esm --target=node22 --packages=external --tsconfig=tsconfig.json --outfile=.deploy-build/address.mjs && node --env-file-if-exists=.env.local .deploy-build/address.mjs",
+    "contract:state": "esbuild scripts/contract-state.mts --bundle --platform=node --format=esm --target=node22 --packages=external --tsconfig=tsconfig.json --outfile=.deploy-build/contract-state.mjs && node --env-file-if-exists=.env.local .deploy-build/contract-state.mjs",
     "deploy:contract": "pnpm deploy:build && node --env-file-if-exists=.env.local --max-old-space-size=8192 .deploy-build/deploy.mjs",
     "deploy:build": "esbuild scripts/deploy.mts --bundle --platform=node --format=esm --target=node22 --packages=external --tsconfig=tsconfig.json --outfile=.deploy-build/deploy.mjs",
     "zk:assets": "node scripts/copy-zk-assets.mjs"

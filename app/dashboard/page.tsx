@@ -20,7 +20,6 @@ import { Skeleton } from "@/components/ui/skeleton";
 
 function DashboardBody() {
   const {
-    mode,
     status,
     error,
     credentials,
@@ -30,40 +29,37 @@ function DashboardBody() {
     wallet,
   } = useVeriHealth();
 
-  if (status === "loading") {
-    return (
-      <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
-        {[0, 1, 2].map((i) => (
-          <Skeleton key={i} className="h-96 w-full rounded-xl" />
-        ))}
-      </div>
-    );
-  }
-
-  if (status === "error") {
+  if (status === "unconfigured" || status === "error") {
     return (
       <div className="rounded-lg border border-destructive/40 bg-destructive/5 p-6">
-        <h2 className="font-medium">Contract runtime unavailable</h2>
+        <h2 className="font-medium">
+          {status === "unconfigured" ? "Not configured" : "Could not reach the contract"}
+        </h2>
         <p className="mt-1 text-sm text-muted-foreground">{error}</p>
       </div>
     );
   }
 
-  // Supabase mode: credentials belong to a wallet, so an identity comes first.
-  if (mode === "supabase" && !wallet) {
+  if (status === "connecting") {
+    return <Skeleton className="h-64 w-full rounded-xl" />;
+  }
+
+  // Credentials live on chain and belong to a wallet, so nothing can be shown
+  // before one is connected. There is no demo identity.
+  if (!wallet) {
     return (
       <div className="rounded-lg border p-6">
-        <h2 className="font-medium">Choose an identity to load your credentials</h2>
+        <h2 className="font-medium">Connect your wallet to load your credentials</h2>
         <p className="mt-1 text-sm text-muted-foreground">
-          Connect your wallet, or use the demo identity, from the top of this page.
-          Credentials issued to that wallet will appear here.
+          Credentials issued to your wallet address are read from the deployed
+          Midnight contract. Proving one submits a transaction, so the wallet also
+          needs DUST.
         </p>
       </div>
     );
   }
 
   const nothingYet =
-    mode === "supabase" &&
     !credentialsLoading &&
     !credentialsError &&
     credentials.length === 0 &&
@@ -84,7 +80,7 @@ function DashboardBody() {
         ) : nothingYet ? (
           <p className="rounded-md border p-4 text-sm text-muted-foreground">
             No credentials have been issued to{" "}
-            <code className="text-xs">{wallet?.address}</code> yet. Give this address
+            <code className="text-xs">{wallet.address}</code> yet. Give this address
             to an issuer.
           </p>
         ) : (
@@ -98,7 +94,7 @@ function DashboardBody() {
           </div>
         )}
       </section>
-      {mode === "supabase" && <ImportCredential />}
+      <ImportCredential />
       <ProofHistory />
     </div>
   );
@@ -114,7 +110,7 @@ export default function DashboardPage() {
             <h1 className="text-3xl font-semibold tracking-tight">Patient dashboard</h1>
             <p className="mt-2 max-w-2xl text-sm text-muted-foreground">
               Your medical facts stay on this device. Generating a proof runs a
-              Midnight Compact circuit locally and shares only a pass/fail result.
+              Midnight Compact circuit and publishes only a pass/fail result.
             </p>
           </div>
           <div className="flex flex-col items-end gap-3">

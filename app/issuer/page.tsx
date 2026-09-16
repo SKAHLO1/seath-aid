@@ -1,95 +1,12 @@
 // SPDX-License-Identifier: Apache-2.0
 "use client";
 
-import { AlertTriangle, Ban } from "lucide-react";
+import { AlertTriangle } from "lucide-react";
 import Link from "next/link";
-import { useState } from "react";
 
-import {
-  VeriHealthProvider,
-  useVeriHealth,
-} from "@/components/ehr/verihealth-provider";
-import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
-import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card";
 import { IssuerConsole } from "@/components/ehr/issuer-console";
-import { Skeleton } from "@/components/ui/skeleton";
-import { CLAIM_TYPE_META } from "@/lib/midnight/claim-types";
-
-function IssuerBody() {
-  const { mode, status, credentials, revokeCredential, isRevoked } = useVeriHealth();
-  const [busy, setBusy] = useState<string | null>(null);
-
-  if (status !== "ready") {
-    return <Skeleton className="h-64 w-full rounded-xl" />;
-  }
-
-  // With Supabase configured, credentials are issued and revoked by signed-in
-  // issuer operators rather than self-issued in this tab.
-  if (mode === "supabase") {
-    return <IssuerConsole />;
-  }
-
-  async function onRevoke(id: string) {
-    setBusy(id);
-    try {
-      await revokeCredential(id);
-    } finally {
-      setBusy(null);
-    }
-  }
-
-  return (
-    <div className="space-y-4">
-      {credentials.map((c) => {
-        const revoked = isRevoked(c.id);
-        return (
-          <Card key={c.id}>
-            <CardHeader>
-              <div className="flex items-start justify-between gap-4">
-                <div>
-                  <CardTitle className="text-base">{c.displayLabel}</CardTitle>
-                  <CardDescription>{c.issuerName}</CardDescription>
-                </div>
-                <Badge variant={revoked ? "destructive" : "secondary"}>
-                  {revoked ? "Revoked" : CLAIM_TYPE_META[c.claimType].label}
-                </Badge>
-              </div>
-            </CardHeader>
-            <CardContent className="space-y-3">
-              <div className="text-xs text-muted-foreground">
-                <span className="font-medium">Revocation handle</span>
-                <code className="mt-1 block truncate rounded bg-muted px-2 py-1">
-                  {c.handle}
-                </code>
-              </div>
-              <Button
-                variant="destructive"
-                size="sm"
-                disabled={revoked || busy === c.id}
-                onClick={() => onRevoke(c.id)}
-                data-testid={`revoke-${c.id}`}
-              >
-                <Ban className="mr-2 h-4 w-4" />
-                {revoked
-                  ? "Already revoked"
-                  : busy === c.id
-                    ? "Revoking…"
-                    : "Revoke credential"}
-              </Button>
-            </CardContent>
-          </Card>
-        );
-      })}
-    </div>
-  );
-}
+import { VeriHealthProvider } from "@/components/ehr/verihealth-provider";
+import { Button } from "@/components/ui/button";
 
 export default function IssuerPage() {
   return (
@@ -99,9 +16,10 @@ export default function IssuerPage() {
           <p className="text-sm text-muted-foreground">Seath Aid</p>
           <h1 className="text-3xl font-semibold tracking-tight">Issuer console</h1>
           <p className="mt-2 text-sm text-muted-foreground">
-            Revoking writes the credential&apos;s handle to the on-chain revocation
-            registry. Every subsequent proof attempt for that credential fails
-            inside the circuit.
+            Issuing publishes a credential&apos;s commitment to the on-chain Merkle
+            tree; revoking writes its handle to the on-chain revocation registry.
+            Every subsequent proof attempt for a revoked credential fails inside
+            the circuit.
           </p>
         </header>
 
@@ -114,7 +32,7 @@ export default function IssuerPage() {
           </span>
         </div>
 
-        <IssuerBody />
+        <IssuerConsole />
 
         <div className="mt-6 flex gap-2">
           <Button asChild variant="outline" size="sm">

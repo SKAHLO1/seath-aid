@@ -24,10 +24,10 @@ boolean. Nothing else ever leaves the patient's device.
 | Coverage/Eligibility Proof | Complete — contract, tests, UI |
 | Nullifier + revocation registry shared across all claim types | Complete |
 | Contract simulation tests (valid / tampered / revoked × 3) | 19 passing |
-| Frontend tests (proof flows, credential packages, client config) | 27 passing |
+| Frontend tests (credential packages, verifier view, client config) | 18 passing (+1 Supabase E2E, skipped without a local stack) |
 | Supabase schema, RLS, issuance flow | Integrated; 27 RLS checks + end-to-end test pass on a local stack; hosted project not yet created |
 | Patient dashboard, verifier view, issuer console, wallet connect | Complete |
-| Contract deployed to Midnight preprod | `deployments/preprod.json`; the browser app still runs its own in-memory ledger |
+| Contract deployed to Midnight preprod | `deployments/preprod.json`; the app talks to it directly — issuance, revocation and proofs are all real transactions |
 
 ---
 
@@ -133,37 +133,48 @@ The frontend executes the **real compiled circuits**. Nothing is mocked.
 - `contracts/src/verihealth.compact` is compiled by `compact compile` into
   TypeScript bindings, ZKIR, and prover/verifier keys under
   `contracts/src/managed/verihealth/`.
-- [`lib/midnight/runtime.ts`](lib/midnight/runtime.ts) loads those artefacts and
-  drives them through `@midnight-ntwrk/compact-runtime` — the same package the
-  contract test suite uses and the same one a deployed DApp uses to build
-  transactions.
+- [`lib/midnight/browser/chain.ts`](lib/midnight/browser/chain.ts) drives those
+  artefacts against the **deployed contract**: it stages each circuit's
+  witnesses into the private-state store, submits the call through
+  `@midnight-ntwrk/midnight-js-contracts`, and reads the result back off the
+  ledger.
 - [`lib/midnight/wallet.ts`](lib/midnight/wallet.ts) implements Midnight's
   DApp connector flow (`dapp-connector-api` 4.x): it enumerates
   `window.midnight`, prefers **1AM**, then Lace, then any other injected wallet,
   and calls `connect(networkId)`. `NEXT_PUBLIC_PREFERRED_WALLET_RDNS` overrides
-  the choice. With no wallet installed the UI offers a clearly-labelled demo
-  identity so the flow is still walkable.
+  the choice.
 
-### Current scope: the ledger runs in the browser
+### Everything is on chain
 
-The public ledger is held **in memory in the browser tab**, not on Midnight
-testnet. That keeps the complete issue → hold → prove → verify → revoke loop
-runnable with no funded wallet, no proof server, and no testnet sync.
+There is no in-browser ledger and no demo identity. Issuing a credential,
+revoking one, and proving a claim are each a **real transaction** against the
+contract at `NEXT_PUBLIC_MIDNIGHT_CONTRACT_ADDRESS`: proved on the proof server,
+signed and paid for by the connected wallet, and confirmed by the indexer. Each
+costs DUST and takes minutes, and the UI says so before you commit to one.
 
-What is genuinely enforced by the compiled Compact contract: the private/public
-state split, Merkle attestation, the revocation check, nullifier replay
-protection, and every claim predicate. What is not wired up yet: pointing the
-app at the deployed contract, submitting real transactions, and generating
-actual SNARK proofs via the proof server. Because no SNARK is generated in this
-mode, the ~39 MB of prover keys are not required at runtime and are gitignored.
+That has consequences worth knowing before you start:
 
-The contract itself **is** deployed to preprod — see
-[`deployments/preprod.json`](deployments/preprod.json) — and `/deploy` (a
+- **A wallet is required**, on both sides. The patient dashboard shows nothing
+  until one is connected, and the issuer console needs one in addition to its
+  Supabase sign-in, because it pays for issuance and revocation.
+- **Both wallets need DUST.** Fund them with tNIGHT and register that NIGHT for
+  DUST generation, or every action fails at the balancing step.
+- **A fresh contract is empty.** No issuer is registered, so nothing can be
+  issued and no proof can succeed. The issuer console offers a one-time
+  "Register issuers on chain" action — one transaction per issuer. Check the
+  current state any time with `pnpm contract:state`.
+- **The prover keys are required at runtime** (~39 MB, served from `public/zk`
+  by `pnpm zk:assets`), because real SNARKs are now generated.
+- **A proof server is required.** The local one at `localhost:6300` is preferred
+  when it answers; it sees witness data in the clear, so it must be one you
+  control.
+
+State persists because it is on chain: reloading the page changes nothing, and a
+revocation made in one browser is visible in every other.
+
+The contract deployed to preprod is recorded in
+[`deployments/preprod.json`](deployments/preprod.json); `/deploy` (a
 development-only page) deploys a new one from the browser.
-
-Reloading the page resets the in-memory ledger and re-issues the demo
-credentials. Navigate between routes using the in-app links so the dashboard,
-verifier view, and issuer console share one ledger.
 
 ---
 
@@ -205,8 +216,15 @@ self-service `registerIssuer` used here. All medical data is synthetic.
 
 - Node 20+ and pnpm 10+
 - A Chromium or Firefox browser
-- Optional: a Midnight wallet — [1AM](https://1am.xyz) (the default) or
-  [Lace](https://www.lace.io/midnight). Without one the app offers a demo identity.
+- **A Midnight wallet** — [1AM](https://1am.xyz) (the default) or
+  [Lace](https://www.lace.io/midnight). Required: every action is a signed
+  transaction. There is no demo identity.
+- **DUST in that wallet.** Fund it with tNIGHT and register that NIGHT for DUST
+  generation, or issuance and proving fail at the balancing step.
+- **A proof server**, for generating the SNARKs:
+  `docker run -p 6300:6300 midnightnetwork/proof-server:8.1.0`. It sees witness
+  data in the clear, so run your own rather than a hosted one.
+- **A Supabase project** (see below) — the credential records live there.
 - Optional, only to recompile the contract: the Compact toolchain (see below)
 
 ### Run it
@@ -220,27 +238,41 @@ pnpm start          # http://localhost:3000
 `pnpm dev` also works. Compiled contract bindings are committed, so no Compact
 toolchain is needed just to run the app.
 
-### Walk the demo
+### Walk the flow
 
-1. Open **http://localhost:3000** and click **Open patient dashboard**.
-2. The dashboard boots the contract runtime and issues three demo credentials
-   through the real issuance circuit — one per claim type. The **Public ledger**
-   panel shows 3 registered issuers and 0 proofs.
-3. Connect your wallet (1AM by default), or click **Use demo identity**.
-4. On the **MMR immunisation series** card, leave the verifier as "Acme Corp HR"
-   and click **Generate proof**. This runs `proveVaccination`. You should see
-   **Proof passed** and a proof reference. Copy it.
-5. Click **Verifier view**. Paste the reference and click **Check**. You see the
-   claim type and pass/fail — and confirm the dose count and vaccine code are
-   nowhere on the page.
-6. Go back and try the **LDL cholesterol panel** card. Set the threshold to
-   `200` → passes. Set it to `100` → **Proof failed**. The exact value (150) is
-   never shown, and both outcomes reveal only one bit.
-7. Click **Issuer console**, then **Revoke credential** on the MMR credential.
-   This writes its handle to the on-chain revocation registry.
-8. Return to the dashboard. The MMR card is marked **Revoked** and its
-   **Generate proof** button is disabled — the circuit would reject it anyway.
-   The ledger panel's revoked count is now 1.
+Every numbered step that touches the chain submits a transaction: it costs DUST
+and takes minutes. Two wallets make this easiest — one acting as the issuer, one
+as the patient — but a single funded wallet can play both parts.
+
+Check what the contract currently holds at any point with `pnpm contract:state`.
+A freshly deployed contract is empty, which is why step 2 exists.
+
+1. Open **http://localhost:3000/issuer**. Sign in with the magic link, then
+   connect the issuer's wallet.
+2. If the contract has no registered issuers, the console offers **Register
+   issuers on chain** — one transaction per issuer, needed only once per
+   contract. Nothing can be issued or proven until this completes.
+3. Fill in **Issue a credential**: the patient's wallet address, a label, and the
+   claim values. Submitting publishes the commitment on chain and records the
+   public half in Supabase. Copy the **credential package** it shows you — it
+   holds the medical values, is never uploaded, and cannot be shown again.
+4. Open **/dashboard** in the patient's browser and connect the patient's wallet.
+   The credential appears as pending, awaiting its package. Paste the package
+   into **Import a credential package**; it is verified against the on-chain
+   commitment and stored only in that browser.
+5. On the credential card, set the verifier and click **Generate proof**. This
+   proves the circuit, submits the transaction, and waits for it to settle. You
+   get **Proof passed** and a proof reference — copy it.
+6. Click **Verifier view**, paste the reference, **Check**. You see the claim
+   type and pass/fail, and can confirm the underlying value appears nowhere.
+7. For a lab credential, a threshold the value satisfies passes and one it does
+   not fails — each outcome reveals exactly one bit, never the value. Note that
+   the contract allows only one proof per (credential, verifier) pair, so use a
+   different verifier name to try again.
+8. Back in the issuer console, **Revoke credential**. This writes the handle to
+   the on-chain revocation registry.
+9. Reload the dashboard: the credential shows **Revoked** and proving is
+   refused. The state survives the reload because it is on chain.
 
 ### Run the tests
 
@@ -252,8 +284,13 @@ Or separately:
 
 ```bash
 pnpm test:contracts   # 19 Compact simulation tests
-pnpm test             # 27 frontend tests (+1 Supabase E2E, skipped without a local stack)
+pnpm test             # 18 frontend tests (+1 Supabase E2E, skipped without a local stack)
 ```
+
+The contract simulation suite is where the proof guarantees are asserted. The
+frontend tests cover the pure halves — credential packaging, issuer key
+derivation, the verifier view, client configuration — because every circuit that
+touches the ledger is now a signed transaction and cannot run under vitest.
 
 Contract tests cover, for each of the three claim types: a valid non-revoked
 credential produces a passing proof; a tampered credential fails; a revoked
@@ -279,12 +316,11 @@ under PowerShell. You may need `unzip` and `zstd`:
 Midnight network currently runs. Newer compilers produce artefacts the networks
 reject, so pin this one.
 
-### Optional: Supabase
+### Required: Supabase
 
-The app runs fully without it: the demo self-issues three credentials in the
-browser and keeps an in-memory proof log. Configuring Supabase switches to the
-**issuance flow** — issuers sign in and issue credentials to a patient's wallet,
-patients import them, and credentials, proofs, and revocations persist.
+Supabase holds the credential records and the proof log, so the app reports
+itself unconfigured without it. Issuers sign in here and issue credentials to a
+patient's wallet; patients import the package and prove against the chain.
 
 1. Create a Supabase project.
 2. In the SQL Editor, run the migrations in order:
@@ -347,11 +383,10 @@ SUPABASE_E2E_SECRET_KEY=$SECRET_KEY \
 
 Both refuse to run against anything but localhost.
 
-**Current limit.** The ledger is still in-memory per browser, so a patient's tab
-rebuilds it from Supabase records by acting as the issuer. Only the demo
-issuers' keys are known, so only their credentials can be proven; other issuers'
-credentials are recorded but show as not provable until the app uses the
-deployed contract.
+**Current limit.** The issuer console signs on-chain issuance and revocation with
+the demo issuers' keys, which are hardcoded and public by design. A real issuer
+would hold its key in an HSM and sign there, so credentials from any other
+issuer can be recorded but not issued or revoked from this console.
 
 ---
 
@@ -363,7 +398,8 @@ contracts/
   src/managed/verihealth/         compiler output (bindings committed, keys ignored)
   src/test/                       simulation tests per claim type
 lib/
-  midnight/                       runtime, wallet, claim types, demo issuer, session
+  midnight/                       chain calls, wallet, claim types, demo issuer, session
+  midnight/browser/               connector, providers, contract, chain, state key
   supabase/                       client, types, proof log
 app/
   page.tsx                        landing
