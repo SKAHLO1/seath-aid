@@ -212,3 +212,56 @@ html {
   from { transform: translateX(-33.333%); }
   to   { transform: translateX(0); }
 }
+
+/* ---------------------------------------------------------------------------
+   Intro curtain and text reveal.
+
+   These live in CSS rather than in React state on purpose. The intro renders
+   during SSR and its curtain is an opaque full-screen layer; when retraction
+   was driven by state, the page stayed covered until hydration completed — and
+   forever if JS never ran. A CSS animation starts at first paint and completes
+   on schedule regardless, so the content underneath is always revealed.
+
+   `animation-fill-mode: both` on the reveal holds the from-state through the
+   delay, which is what lets a word wait its turn without JS hiding it.
+   --------------------------------------------------------------------------- */
+
+@keyframes seath-reveal {
+  from { opacity: 0; filter: blur(8px); transform: translateY(12px); }
+  to   { opacity: 1; filter: blur(0);   transform: translateY(0); }
+}
+
+@keyframes seath-letter-in {
+  from { opacity: 0; filter: blur(36px); transform: translateY(48px); }
+  to   { opacity: 1; filter: blur(0);    transform: translateY(0); }
+}
+
+@keyframes seath-letter-out {
+  to { opacity: 0; filter: blur(24px); transform: translateY(-20px); }
+}
+
+@keyframes seath-curtain-up {
+  to { transform: translateY(-100%); }
+}
+
+/* Duration and delay are supplied inline, per instance. */
+.seath-curtain {
+  animation-name: seath-curtain-up;
+  animation-timing-function: cubic-bezier(0.76, 0, 0.24, 1);
+  animation-fill-mode: forwards;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  /* Drop the whole intro rather than playing it faster — and do it in CSS, so
+     it never covers the page even for the moment before JS loads. */
+  .seath-intro { display: none !important; }
+
+  .seath-reveal-word {
+    animation: none !important;
+    opacity: 1 !important;
+    filter: none !important;
+    transform: none !important;
+  }
+
+  html { scroll-behavior: auto !important; }
+}

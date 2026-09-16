@@ -5,6 +5,7 @@ import { Check, Search, ShieldCheck, X } from "lucide-react";
 import Link from "next/link";
 import { useState } from "react";
 
+import { Logo } from "@/components/logo";
 import { Button } from "@/components/ui/button";
 import {
   Card,
@@ -45,7 +46,7 @@ export default function VerifyPage() {
   return (
     <main className="mx-auto max-w-2xl px-6 py-16">
       <header className="mb-8">
-        <p className="text-sm text-muted-foreground">Seath Aid</p>
+        <Logo className="mb-1" />
         <h1 className="text-3xl font-semibold tracking-tight">Verifier</h1>
         <p className="mt-2 text-sm text-muted-foreground">
           Paste a proof reference from a patient. You will see which claim was

@@ -15,6 +15,7 @@ import {
   useVeriHealth,
 } from "@/components/ehr/verihealth-provider";
 import { WalletConnect } from "@/components/ehr/wallet-connect";
+import { Logo } from "@/components/logo";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 
@@ -106,7 +107,7 @@ export default function DashboardPage() {
       <main className="mx-auto max-w-6xl px-6 py-12">
         <header className="mb-10 flex flex-wrap items-start justify-between gap-4">
           <div>
-            <p className="text-sm text-muted-foreground">Seath Aid</p>
+            <Logo className="mb-1" />
             <h1 className="text-3xl font-semibold tracking-tight">Patient dashboard</h1>
             <p className="mt-2 max-w-2xl text-sm text-muted-foreground">
               Your medical facts stay on this device. Generating a proof runs a
